@@ -46,3 +46,25 @@ media import action, then drag them onto the audio timeline. The preview is for
 auditioning the original five sounds; the individual WAVs are the editing assets.
 Local workspace paths are not public download URLs. Generated assets are ignored
 by Git, so downloading a source-only repository does not include them.
+
+## Tan Phat premium editing pack
+
+```sh
+.venv/bin/python src/premium_pack.py --output outputs/CAPCUT_PREMIUM_EDIT_PACK
+```
+
+This separate pack implements the revised 40-sound brief, all 74 user-supplied
+cue timestamps, four typography styles, 30 motion presets, actual animated cue
+text and 11 transparent visual overlays. It includes complete-audition and
+314-second timeline WAVs, CSV/JSON cue sheets, alpha MOVs, RGBA PNGs, two MP4
+previews, source code, technical validation and a ZIP archive. It never overwrites
+previous packs. To regenerate, select a new output name (and therefore a new ZIP
+name). A Vietnamese-capable font can be selected with `--font /path/to/font.ttf`.
+
+The timeline is provisional. The source MOV and SRT have not been supplied, so
+the generated previews use a labeled graphic background. No reviewed dialogue
+SRT or final source-video edit is claimed. Recheck product names, claims,
+timing, source aspect ratio and face/product occlusion after upload. The JSON
+presets and CSV do not automatically create a native CapCut project; use the
+rendered assets and cue times. CapCut codec support must be checked in the user's
+version; PNG and keyframe metadata remain available if qtrle MOV import fails.

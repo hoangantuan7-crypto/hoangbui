@@ -1,0 +1,446 @@
+[
+  {
+    "start": 3.875,
+    "text": "HÀNG VẪN CÒN NHIỀU!",
+    "direction": "Scale Punch + Pop.",
+    "audio_only": false
+  },
+  {
+    "start": 6.958,
+    "text": "CHIỀU NAY PHẢI GIAO KHÁCH!",
+    "direction": "Bounce + Impact.",
+    "audio_only": false
+  },
+  {
+    "start": 11.916,
+    "text": "TẤN PHÁT INTERIOR",
+    "direction": "Cinematic Reveal.",
+    "audio_only": false
+  },
+  {
+    "start": 16.416,
+    "text": "INAX • AMERICAN STANDARD",
+    "direction": "Premium Fade.",
+    "audio_only": false
+  },
+  {
+    "start": 20.291,
+    "text": "1 TIN BUỒN – 1 TIN VUI",
+    "direction": "Dramatic Hit + Overshoot.",
+    "audio_only": false
+  },
+  {
+    "start": 23.0,
+    "text": "NGƯỜI YÊU CŨ…",
+    "direction": "Record Scratch + Typewriter.",
+    "audio_only": false
+  },
+  {
+    "start": 23.7,
+    "text": "LẤY CHỒNG RỒI!",
+    "direction": "Shake + Scale Punch.",
+    "audio_only": false
+  },
+  {
+    "start": 24.0,
+    "text": "Piano buồn ngắn.",
+    "direction": "Audio only",
+    "audio_only": true
+  },
+  {
+    "start": 25.125,
+    "text": "NHƯNG…",
+    "direction": "Spring Drop.",
+    "audio_only": false
+  },
+  {
+    "start": 26.0,
+    "text": "TIN VUI LÀ…",
+    "direction": "Word Reveal.",
+    "audio_only": false
+  },
+  {
+    "start": 29.0,
+    "text": "CÓ ĐỒ MỚI Ở TẤN PHÁT!",
+    "direction": "Elastic Pop.",
+    "audio_only": false
+  },
+  {
+    "start": 32.625,
+    "text": "CUỐI NĂM RỒI!",
+    "direction": "Pop.",
+    "audio_only": false
+  },
+  {
+    "start": 36.041,
+    "text": "HÀNG MỚI VỀ LIÊN TỤC",
+    "direction": "Slide Up.",
+    "audio_only": false
+  },
+  {
+    "start": 39.791,
+    "text": "TOÀN SẢN PHẨM MỚI",
+    "direction": "Highlight Sweep.",
+    "audio_only": false
+  },
+  {
+    "start": 42.333,
+    "text": "ĐI KHÁM PHÁ NÀO!",
+    "direction": "Whoosh.",
+    "audio_only": false
+  },
+  {
+    "start": 49.416,
+    "text": "MÁY RỬA BÁT",
+    "direction": "Tech Reveal.",
+    "audio_only": false
+  },
+  {
+    "start": 53.75,
+    "text": "MẪU MỚI TẠI TẤN PHÁT",
+    "direction": "Soft Pop.",
+    "audio_only": false
+  },
+  {
+    "start": 62.125,
+    "text": "BẾP TỪ HIỆN ĐẠI",
+    "direction": "Digital Scan.",
+    "audio_only": false
+  },
+  {
+    "start": 68.166,
+    "text": "VẪN CÒN BẤT NGỜ…",
+    "direction": "Mystery Riser.",
+    "audio_only": false
+  },
+  {
+    "start": 70.75,
+    "text": "BẬT MÍ MÓN ĐẶC BIỆT",
+    "direction": "Mask Wipe.",
+    "audio_only": false
+  },
+  {
+    "start": 73.5,
+    "text": "CHỊ EM CUỐI NĂM RẤT THÍCH!",
+    "direction": "Bounce.",
+    "audio_only": false
+  },
+  {
+    "start": 83.0,
+    "text": "BỒN CẦU THÔNG MINH",
+    "direction": "Electronic Reveal.",
+    "audio_only": false
+  },
+  {
+    "start": 86.791,
+    "text": "TỰ ĐỘNG MỞ NẮP!",
+    "direction": "Scale Punch + Beep.",
+    "audio_only": false
+  },
+  {
+    "start": 91.916,
+    "text": "THÔNG MINH KHÔNG?",
+    "direction": "Elastic Pop.",
+    "audio_only": false
+  },
+  {
+    "start": 98.083,
+    "text": "ĐÂY LÀ GÌ?",
+    "direction": "Mystery Pop.",
+    "audio_only": false
+  },
+  {
+    "start": 100.041,
+    "text": "ĐỐC SẠC CỦA AI?",
+    "direction": "Floating Text.",
+    "audio_only": false
+  },
+  {
+    "start": 101.5,
+    "text": "ĐOÁN THỬ XEM!",
+    "direction": "Bounce.",
+    "audio_only": false
+  },
+  {
+    "start": 104.583,
+    "text": "ROBOT HÚT BỤI!",
+    "direction": "Futuristic Reveal.",
+    "audio_only": false
+  },
+  {
+    "start": 115.583,
+    "text": "XEM ROBOT LÀM VIỆC!",
+    "direction": "Whoosh.",
+    "audio_only": false
+  },
+  {
+    "start": 122.416,
+    "text": "SHOWROOM KHOẢNG 200 m²",
+    "direction": "Tech Callout.",
+    "audio_only": false
+  },
+  {
+    "start": 126.416,
+    "text": "LEO DỐC!",
+    "direction": "Bounce + Mechanical Pop.",
+    "audio_only": false
+  },
+  {
+    "start": 129.416,
+    "text": "LỰC HÚT MẠNH",
+    "direction": "Scale Punch.",
+    "audio_only": false
+  },
+  {
+    "start": 135.833,
+    "text": "GIẺ LAU XÒE SÁT GÓC",
+    "direction": "Digital Scan.",
+    "audio_only": false
+  },
+  {
+    "start": 139.75,
+    "text": "TIẾP CẬN GÓC NHỎ",
+    "direction": "Arrow Callout.",
+    "audio_only": false
+  },
+  {
+    "start": 157.916,
+    "text": "CẢM NHẬN CỦA HOÀNG",
+    "direction": "Premium Label.",
+    "audio_only": false
+  },
+  {
+    "start": 160.375,
+    "text": "DI CHUYỂN THÔNG MINH",
+    "direction": "Tech Pulse.",
+    "audio_only": false
+  },
+  {
+    "start": 166.875,
+    "text": "ĐƯỜNG LAU CHÉO",
+    "direction": "Scan Line.",
+    "audio_only": false
+  },
+  {
+    "start": 168.666,
+    "text": "LÀM SẠCH CÁC GÓC",
+    "direction": "Highlight.",
+    "audio_only": false
+  },
+  {
+    "start": 172.75,
+    "text": "CHỔI QUÉT BỤI",
+    "direction": "Mechanical Click.",
+    "audio_only": false
+  },
+  {
+    "start": 177.041,
+    "text": "XỊN THẬT!",
+    "direction": "Elastic Pop.",
+    "audio_only": false
+  },
+  {
+    "start": 178.875,
+    "text": "NHÀ HIỆN ĐẠI",
+    "direction": "Cinematic Fade.",
+    "audio_only": false
+  },
+  {
+    "start": 182.708,
+    "text": "ROBOT HÚT BỤI",
+    "direction": "Pop.",
+    "audio_only": false
+  },
+  {
+    "start": 183.875,
+    "text": "MÁY LAU KÍNH",
+    "direction": "Slide.",
+    "audio_only": false
+  },
+  {
+    "start": 186.833,
+    "text": "TRẢI NGHIỆM TẠI TẤN PHÁT",
+    "direction": "Premium Reveal.",
+    "audio_only": false
+  },
+  {
+    "start": 193.458,
+    "text": "CÔNG NGHỆ THÔNG MINH",
+    "direction": "Digital Glow.",
+    "audio_only": false
+  },
+  {
+    "start": 198.458,
+    "text": "ĐIỀU TẤN PHÁT QUAN TÂM",
+    "direction": "Cinematic Title.",
+    "audio_only": false
+  },
+  {
+    "start": 203.083,
+    "text": "TEST TRƯỚC KHI BÁN",
+    "direction": "Premium Impact.",
+    "audio_only": false
+  },
+  {
+    "start": 205.875,
+    "text": "TRẢI NGHIỆM THỰC TẾ",
+    "direction": "Soft Reveal.",
+    "audio_only": false
+  },
+  {
+    "start": 208.916,
+    "text": "CHẤT LƯỢNG RA SAO?",
+    "direction": "Question Pop.",
+    "audio_only": false
+  },
+  {
+    "start": 213.291,
+    "text": "TỰ BỎ CHI PHÍ KIỂM TRA",
+    "direction": "Bold Slide.",
+    "audio_only": false
+  },
+  {
+    "start": 216.791,
+    "text": "KIỂM TRA ĐỘ ỔN ĐỊNH",
+    "direction": "Highlight.",
+    "audio_only": false
+  },
+  {
+    "start": 221.5,
+    "text": "KHÔNG CHỈ NHẬP VỀ RỒI BÁN",
+    "direction": "Cinematic Fade.",
+    "audio_only": false
+  },
+  {
+    "start": 227.916,
+    "text": "CẢM NHẬN THỰC TẾ",
+    "direction": "Premium Label.",
+    "audio_only": false
+  },
+  {
+    "start": 230.666,
+    "text": "SÀN ĐANG RẤT SẠCH!",
+    "direction": "Soft Pop.",
+    "audio_only": false
+  },
+  {
+    "start": 234.5,
+    "text": "ROBOT NGÀY CÀNG THÔNG MINH",
+    "direction": "Tech Reveal.",
+    "audio_only": false
+  },
+  {
+    "start": 237.125,
+    "text": "HỆ THỐNG CẢM BIẾN",
+    "direction": "Digital Scan.",
+    "audio_only": false
+  },
+  {
+    "start": 239.041,
+    "text": "CẢM BIẾN VA CHẠM",
+    "direction": "Sensor Beep.",
+    "audio_only": false
+  },
+  {
+    "start": 242.75,
+    "text": "QUÉT MÔI TRƯỜNG",
+    "direction": "Scan Pulse.",
+    "audio_only": false
+  },
+  {
+    "start": 248.625,
+    "text": "NHẬN DIỆN BỤI BẨN",
+    "direction": "Highlight.",
+    "audio_only": false
+  },
+  {
+    "start": 257.166,
+    "text": "LAU LẠI KHU VỰC CẦN THIẾT",
+    "direction": "Loop Animation.",
+    "audio_only": false
+  },
+  {
+    "start": 265.625,
+    "text": "HOÀNG ĐÁNH GIÁ KHÁ TỐT",
+    "direction": "Premium Text.",
+    "audio_only": false
+  },
+  {
+    "start": 274.541,
+    "text": "BẠN ĐANG NGỦ…",
+    "direction": "Floating Text.",
+    "audio_only": false
+  },
+  {
+    "start": 279.5,
+    "text": "HOẶC ĐANG ĐI LÀM…",
+    "direction": "Slide Up.",
+    "audio_only": false
+  },
+  {
+    "start": 282.83299999999997,
+    "text": "CHỈ CẦN 1 CHẠM!",
+    "direction": "Digital Click + Scale Punch.",
+    "audio_only": false
+  },
+  {
+    "start": 285.5,
+    "text": "ROBOT TỰ LÀM VIỆC",
+    "direction": "Tech Reveal.",
+    "audio_only": false
+  },
+  {
+    "start": 288.541,
+    "text": "ĐI LÀM VỀ…",
+    "direction": "Smooth Fade.",
+    "audio_only": false
+  },
+  {
+    "start": 291.20799999999997,
+    "text": "NHÀ ĐÃ SẠCH SẼ!",
+    "direction": "Uplifting Pop.",
+    "audio_only": false
+  },
+  {
+    "start": 294.791,
+    "text": "TIẾT KIỆM THỜI GIAN",
+    "direction": "Premium Text.",
+    "audio_only": false
+  },
+  {
+    "start": 298.666,
+    "text": "KHÔNG CẦN QUÉT DỌN VẤT VẢ",
+    "direction": "Smooth Slide.",
+    "audio_only": false
+  },
+  {
+    "start": 302.25,
+    "text": "GIẢI PHÁP CHO NGÔI NHÀ",
+    "direction": "Cinematic Reveal.",
+    "audio_only": false
+  },
+  {
+    "start": 305.541,
+    "text": "ROBOT HÚT BỤI",
+    "direction": "Pop.",
+    "audio_only": false
+  },
+  {
+    "start": 307.958,
+    "text": "MÁY RỬA BÁT • KHÓA THÔNG MINH",
+    "direction": "Staggered Text.",
+    "audio_only": false
+  },
+  {
+    "start": 310.958,
+    "text": "GHÉ TẤN PHÁT TRẢI NGHIỆM!",
+    "direction": "Premium CTA.",
+    "audio_only": false
+  },
+  {
+    "start": 313.0,
+    "text": "TẤN PHÁT INTERIOR",
+    "direction": "Logo-style Reveal.",
+    "audio_only": false
+  }
+]

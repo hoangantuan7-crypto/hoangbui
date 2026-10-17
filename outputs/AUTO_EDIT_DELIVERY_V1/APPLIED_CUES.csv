@@ -1,0 +1,75 @@
+﻿ID,Start,End,Text,Type,Position,Status
+E001,3.875,6.275,HÀNG VẪN CÒN NHIỀU!,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E002,6.958,9.358,CHIỀU NAY PHẢI GIAO KHÁCH!,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E003,11.916,14.316,TẤN PHÁT INTERIOR,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E004,16.416,18.816,INAX • AMERICAN STANDARD,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E005,20.291,22.691,1 TIN BUỒN – 1 TIN VUI,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E006,23.0,23.62,NGƯỜI YÊU CŨ…,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E007,23.7,25.045,LẤY CHỒNG RỒI!,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E008,24.0,25.045,Piano buồn ngắn.,audio,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E009,25.125,25.92,NHƯNG…,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E010,26.0,28.4,TIN VUI LÀ…,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E011,29.0,31.4,CÓ ĐỒ MỚI Ở TẤN PHÁT!,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E012,32.625,35.025,CUỐI NĂM RỒI!,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E013,36.041,38.441,HÀNG MỚI VỀ LIÊN TỤC,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E014,39.791,42.191,TOÀN SẢN PHẨM MỚI,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E015,42.333,44.733,ĐI KHÁM PHÁ NÀO!,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E016,49.416,51.816,MÁY RỬA BÁT,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E017,53.75,56.15,MẪU MỚI TẠI TẤN PHÁT,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E018,62.125,64.525,BẾP TỪ HIỆN ĐẠI,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E019,68.166,70.566,VẪN CÒN BẤT NGỜ…,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E020,70.75,73.15,BẬT MÍ MÓN ĐẶC BIỆT,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E021,73.5,75.9,CHỊ EM CUỐI NĂM RẤT THÍCH!,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E022,83.0,85.4,BỒN CẦU THÔNG MINH,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E023,86.791,89.191,TỰ ĐỘNG MỞ NẮP!,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E024,91.916,94.316,THÔNG MINH KHÔNG?,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E025,98.083,99.961,ĐÂY LÀ GÌ?,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E026,100.041,101.42,ĐỐC SẠC CỦA AI?,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E027,101.5,103.9,ĐOÁN THỬ XEM!,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E028,104.583,106.983,ROBOT HÚT BỤI!,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E029,115.583,117.983,XEM ROBOT LÀM VIỆC!,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E030,122.416,124.816,SHOWROOM KHOẢNG 200 m²,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E031,126.416,128.816,LEO DỐC!,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E032,129.416,131.816,LỰC HÚT MẠNH,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E033,135.833,138.233,GIẺ LAU XÒE SÁT GÓC,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E034,139.75,142.15,TIẾP CẬN GÓC NHỎ,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E035,157.916,160.295,CẢM NHẬN CỦA HOÀNG,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E036,160.375,162.775,DI CHUYỂN THÔNG MINH,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E037,166.875,168.586,ĐƯỜNG LAU CHÉO,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E038,168.666,171.066,LÀM SẠCH CÁC GÓC,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E039,172.75,175.15,CHỔI QUÉT BỤI,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E040,177.041,178.795,XỊN THẬT!,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E041,178.875,181.275,NHÀ HIỆN ĐẠI,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E042,182.708,183.795,ROBOT HÚT BỤI,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E043,183.875,186.275,MÁY LAU KÍNH,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E044,186.833,189.233,TRẢI NGHIỆM TẠI TẤN PHÁT,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E045,193.458,195.858,CÔNG NGHỆ THÔNG MINH,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E046,198.458,200.858,ĐIỀU TẤN PHÁT QUAN TÂM,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E047,203.083,205.483,TEST TRƯỚC KHI BÁN,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E048,205.875,208.275,TRẢI NGHIỆM THỰC TẾ,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E049,208.916,211.316,CHẤT LƯỢNG RA SAO?,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E050,213.291,215.691,TỰ BỎ CHI PHÍ KIỂM TRA,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E051,216.791,219.191,KIỂM TRA ĐỘ ỔN ĐỊNH,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E052,221.5,223.9,KHÔNG CHỈ NHẬP VỀ RỒI BÁN,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E053,227.916,230.316,CẢM NHẬN THỰC TẾ,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E054,230.666,233.066,SÀN ĐANG RẤT SẠCH!,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E055,234.5,236.9,ROBOT NGÀY CÀNG THÔNG MINH,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E056,237.125,238.961,HỆ THỐNG CẢM BIẾN,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E057,239.041,241.441,CẢM BIẾN VA CHẠM,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E058,242.75,245.15,QUÉT MÔI TRƯỜNG,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E059,248.625,251.025,NHẬN DIỆN BỤI BẨN,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E060,257.166,259.566,LAU LẠI KHU VỰC CẦN THIẾT,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E061,265.625,268.025,HOÀNG ĐÁNH GIÁ KHÁ TỐT,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E062,274.541,276.941,BẠN ĐANG NGỦ…,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E063,279.5,281.9,HOẶC ĐANG ĐI LÀM…,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E064,282.83299999999997,285.233,CHỈ CẦN 1 CHẠM!,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E065,285.5,287.9,ROBOT TỰ LÀM VIỆC,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E066,288.541,290.941,ĐI LÀM VỀ…,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E067,291.20799999999997,293.608,NHÀ ĐÃ SẠCH SẼ!,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E068,294.791,297.191,TIẾT KIỆM THỜI GIAN,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E069,298.666,301.066,KHÔNG CẦN QUÉT DỌN VẤT VẢ,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E070,302.25,304.65,GIẢI PHÁP CHO NGÔI NHÀ,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E071,305.541,307.878,ROBOT HÚT BỤI,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E072,307.958,310.358,MÁY RỬA BÁT • KHÓA THÔNG MINH,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E073,310.958,312.92,GHÉ TẤN PHÁT TRẢI NGHIỆM!,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment
+E074,313.0,314.667,TẤN PHÁT INTERIOR,text,upper band; existing subtitles preserved,brief/SRT-based; not word-level forced alignment

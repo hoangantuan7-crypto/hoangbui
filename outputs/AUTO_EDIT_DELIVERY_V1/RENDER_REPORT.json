@@ -1,0 +1,19 @@
+{
+  "source_seconds": 314.666667,
+  "output_seconds": 314.666667,
+  "frames": 7552,
+  "output_dimensions": [
+    540,
+    960
+  ],
+  "fps": 24.0,
+  "source_display_aspect": 0.5625,
+  "original_audio_included": true,
+  "sfx_ducked": true,
+  "existing_subtitles_preserved": true,
+  "new_subtitles_burned": false,
+  "product_claims_verified": false,
+  "word_level_alignment_verified": false,
+  "technical_decode": "PASS",
+  "note": "Rendered from compressed proxy; do not describe as full-resolution master. Inspect final framing and mix before publishing."
+}

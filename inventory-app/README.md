@@ -5,6 +5,7 @@
 ## Tính năng
 
 - **Quét mã vạch bằng camera** (EAN-13, EAN-8, UPC, Code 128, Code 39, ITF, QR). Cũng nhận **máy quét Bluetooth/USB** hoặc nhập tay.
+- **Tùy chỉnh camera:** nút 🔦 đèn flash (Android/Chrome), chọn vùng quét (nhỏ/vừa/lớn/toàn khung) và tốc độ quét (thường/nhanh/rất nhanh).
 - **3 chế độ:**
   - ➕ **Nhập kho** – quét là cộng số lượng; mã mới thì mở form thêm sản phẩm.
   - ➖ **Xuất kho** – quét là trừ số lượng (không cho âm).
@@ -21,9 +22,9 @@
 
 Camera trên điện thoại chỉ hoạt động qua **HTTPS**. Cách đơn giản nhất là GitHub Pages:
 
-1. Merge nhánh này vào `main`.
+1. Merge nhánh này vào nhánh mặc định `delivery/completed-assets`.
 2. Trên GitHub: **Settings → Pages → Build and deployment → Source: GitHub Actions**.
-3. Workflow `.github/workflows/inventory-pages.yml` sẽ tự deploy. Địa chỉ dạng
+3. Workflow `.github/workflows/inventory-pages.yml` sẽ tự deploy mỗi khi nhánh mặc định thay đổi (hoặc chạy tay trong tab Actions). Địa chỉ dạng
    `https://<tên-tài-khoản>.github.io/hoangbui/`.
 4. Mở link trên điện thoại → cho phép camera →
    - iPhone (Safari): nút Chia sẻ → **Thêm vào MH chính**.

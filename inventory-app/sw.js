@@ -1,5 +1,5 @@
 // Service worker: cho phép mở app khi không có mạng.
-const CACHE = 'kiemkho-v2';
+const CACHE = 'kiemkho-v3';
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './categorize.js',
   './manifest.webmanifest', './icon.svg',

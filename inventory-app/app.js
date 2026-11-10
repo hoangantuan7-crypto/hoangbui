@@ -12,7 +12,7 @@
       categories: C.DEFAULT_CATEGORIES.map((c) => ({ ...c, keywords: [...c.keywords] })),
       learned: { barcodes: {}, keywords: {} },
       history: [],
-      settings: { online: true, autosave: false, sound: true },
+      settings: { online: true, autosave: false, sound: true, scanArea: 'medium', speed: 'fast' },
       count: {},
     };
   }
@@ -20,7 +20,10 @@
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return defaultState();
-      return { ...defaultState(), ...JSON.parse(raw) };
+      const data = JSON.parse(raw);
+      const def = defaultState();
+      // Gộp cài đặt để bản cũ vẫn có các tùy chọn mới.
+      return { ...def, ...data, settings: { ...def.settings, ...(data.settings || {}) } };
     } catch (e) {
       return defaultState();
     }
@@ -312,9 +315,37 @@
   let paused = false;
   let lastCode = '';
   let lastAt = 0;
+  let torch = null; // tính năng đèn flash của camera đang chạy
+  let torchOn = false;
+
+  // Kích thước vùng quét theo tỉ lệ khung hình (rộng, cao). null = toàn khung.
+  const SCAN_AREAS = { small: [0.6, 0.22], medium: [0.8, 0.4], large: [0.95, 0.6], full: null };
+  // fps: số khung hình phân tích mỗi giây; dedupe: thời gian bỏ qua cùng một mã (ms).
+  const SPEEDS = { normal: { fps: 10, dedupe: 2000 }, fast: { fps: 20, dedupe: 1500 }, max: { fps: 30, dedupe: 1000 } };
+  const speed = () => SPEEDS[state.settings.speed] || SPEEDS.fast;
+
+  function scanConfig() {
+    const cfg = {
+      fps: speed().fps,
+      disableFlip: true, // mã vạch không bị lật gương → bỏ bước thử lật, quét nhanh hơn
+      // Độ phân giải cao hơn giúp đọc mã nhỏ/xa; "ideal" để máy yếu vẫn chạy được.
+      videoConstraints: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+    };
+    const area = SCAN_AREAS[state.settings.scanArea];
+    if (area) {
+      cfg.qrbox = (w, h) => ({
+        width: Math.max(80, Math.floor(w * area[0])),
+        height: Math.max(60, Math.floor(Math.min(h, w) * area[1])),
+      });
+    }
+    return cfg;
+  }
 
   async function toggleCamera() {
     if (scanning) return stopCamera();
+    await startCamera();
+  }
+  async function startCamera() {
     if (typeof Html5Qrcode === 'undefined') {
       toast('Không tải được thư viện quét. Kiểm tra kết nối mạng.');
       return;
@@ -326,16 +357,14 @@
         experimentalFeatures: { useBarCodeDetectorIfSupported: true },
         verbose: false,
       });
-      await scanner.start(
-        { facingMode: 'environment' },
-        { fps: 12, qrbox: (w, h) => ({ width: Math.floor(w * 0.85), height: Math.floor(Math.min(h, w) * 0.45) }) },
-        onDecoded,
-        () => {}
-      );
+      await scanner.start({ facingMode: 'environment' }, scanConfig(), onDecoded, () => {});
       scanning = true;
       paused = false;
       $('#scanner-placeholder').classList.add('hidden');
       $('#btn-camera').textContent = '⏹ Tắt camera';
+      // Lấy nét liên tục (nếu camera hỗ trợ) để quét nhanh khi di chuyển.
+      try { await scanner.applyVideoConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch (e) { /* không hỗ trợ */ }
+      setupTorch();
     } catch (err) {
       toast('Không mở được camera: hãy cho phép quyền camera (cần HTTPS).');
       console.error(err);
@@ -346,8 +375,41 @@
       try { await scanner.stop(); } catch (e) { /* bỏ qua */ }
     }
     scanning = false;
+    torch = null;
+    setTorchUi(false, false);
     $('#scanner-placeholder').classList.remove('hidden');
     $('#btn-camera').textContent = '📷 Bật camera';
+  }
+  async function restartCamera() {
+    if (!scanning) return;
+    await stopCamera();
+    await startCamera();
+  }
+
+  // ---------- Đèn flash ----------
+  function setupTorch() {
+    torch = null;
+    try {
+      const t = scanner.getRunningTrackCameraCapabilities().torchFeature();
+      if (t.isSupported()) torch = t;
+    } catch (e) { /* trình duyệt không hỗ trợ */ }
+    setTorchUi(!!torch, false);
+  }
+  function setTorchUi(visible, on) {
+    torchOn = on;
+    const b = $('#btn-torch');
+    b.classList.toggle('hidden', !visible);
+    b.setAttribute('aria-pressed', String(on));
+    b.setAttribute('aria-label', on ? 'Tắt đèn flash' : 'Bật đèn flash');
+  }
+  async function toggleTorch() {
+    if (!torch) return;
+    try {
+      await torch.apply(!torchOn);
+      setTorchUi(true, !torchOn);
+    } catch (e) {
+      toast('Không bật được đèn flash trên máy này');
+    }
   }
   function pauseScanner() {
     if (scanner && scanning && !paused) { try { scanner.pause(true); paused = true; } catch (e) { /* bỏ qua */ } }
@@ -357,7 +419,7 @@
   }
   function onDecoded(text) {
     const now = Date.now();
-    if (text === lastCode && now - lastAt < 2000) return; // chống quét lặp
+    if (text === lastCode && now - lastAt < speed().dedupe) return; // chống quét lặp
     lastCode = text;
     lastAt = now;
     const wrap = document.querySelector('.scanner-wrap');
@@ -493,7 +555,10 @@
         const data = JSON.parse(reader.result);
         if (!data || typeof data.items !== 'object') throw new Error('bad');
         if (!confirm('Thay dữ liệu hiện tại bằng bản sao lưu (' + Object.keys(data.items).length + ' sản phẩm)?')) return;
-        state = { ...defaultState(), ...data };
+        const def = defaultState();
+        state = { ...def, ...data, settings: { ...def.settings, ...(data.settings || {}) } };
+        $('#opt-area').value = state.settings.scanArea;
+        $('#opt-speed').value = state.settings.speed;
         save();
         render();
         toast('✅ Đã khôi phục');
@@ -521,6 +586,14 @@
       render();
     }));
     $('#btn-camera').addEventListener('click', toggleCamera);
+    $('#btn-torch').addEventListener('click', toggleTorch);
+    $('#opt-area').value = state.settings.scanArea;
+    $('#opt-speed').value = state.settings.speed;
+    [['#opt-area', 'scanArea'], ['#opt-speed', 'speed']].forEach(([sel, key]) => $(sel).addEventListener('change', (e) => {
+      state.settings[key] = e.target.value;
+      save();
+      restartCamera(); // áp dụng ngay nếu camera đang bật
+    }));
     $('#manual-form').addEventListener('submit', (e) => {
       e.preventDefault();
       const v = $('#manual-code').value.trim();

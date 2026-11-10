@@ -1,7 +1,7 @@
 name: Deploy Kiểm Kho to GitHub Pages
 on:
   push:
-    branches: [main]
+    branches: [delivery/completed-assets]
     paths: ['inventory-app/**']
   workflow_dispatch:
 permissions:

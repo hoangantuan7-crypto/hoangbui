@@ -32,9 +32,27 @@
         <div class="scanner-placeholder" id="scanner-placeholder">
           <p>Bấm nút bên dưới để mở camera và quét mã vạch</p>
         </div>
+        <button id="btn-torch" class="torch hidden" aria-pressed="false" aria-label="Bật đèn flash">🔦</button>
       </div>
       <div class="row">
         <button id="btn-camera" class="primary big">📷 Bật camera</button>
+      </div>
+      <div class="row scan-opts">
+        <label>Vùng quét
+          <select id="opt-area">
+            <option value="small">Nhỏ (mã sát nhau)</option>
+            <option value="medium">Vừa</option>
+            <option value="large">Lớn</option>
+            <option value="full">Toàn khung hình</option>
+          </select>
+        </label>
+        <label>Tốc độ quét
+          <select id="opt-speed">
+            <option value="normal">Thường (tiết kiệm pin)</option>
+            <option value="fast">Nhanh</option>
+            <option value="max">Rất nhanh</option>
+          </select>
+        </label>
       </div>
 
       <form id="manual-form" class="row manual">

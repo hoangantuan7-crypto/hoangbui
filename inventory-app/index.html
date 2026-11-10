@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f766e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Kiểm Kho">
+  <title>Kiểm Kho</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>📦 Kiểm Kho</h1>
+    <div class="stats" id="stats">0 sản phẩm · 0 đơn vị</div>
+  </header>
+
+  <main>
+    <!-- TAB QUÉT -->
+    <section id="tab-scan" class="tab active">
+      <div class="modes" role="radiogroup" aria-label="Chế độ quét">
+        <button class="mode active" data-mode="in" role="radio" aria-checked="true">➕ Nhập kho</button>
+        <button class="mode" data-mode="out" role="radio" aria-checked="false">➖ Xuất kho</button>
+        <button class="mode" data-mode="count" role="radio" aria-checked="false">📋 Kiểm kê</button>
+      </div>
+
+      <div class="scanner-wrap">
+        <div id="reader"></div>
+        <div class="scanner-placeholder" id="scanner-placeholder">
+          <p>Bấm nút bên dưới để mở camera và quét mã vạch</p>
+        </div>
+      </div>
+      <div class="row">
+        <button id="btn-camera" class="primary big">📷 Bật camera</button>
+      </div>
+
+      <form id="manual-form" class="row manual">
+        <input id="manual-code" inputmode="numeric" autocomplete="off" placeholder="Nhập mã vạch / dùng máy quét Bluetooth" aria-label="Mã vạch">
+        <button type="submit" class="primary">Thêm</button>
+      </form>
+
+      <div class="row qty-step">
+        <label>Mỗi lần quét:
+          <input id="step" type="number" min="1" value="1" inputmode="numeric">
+        </label>
+      </div>
+
+      <div id="count-panel" class="card hidden">
+        <div class="card-head">
+          <strong>Phiên kiểm kê</strong>
+          <span id="count-summary"></span>
+        </div>
+        <ul id="count-list" class="count-list"></ul>
+        <div class="row">
+          <button id="btn-count-apply" class="primary">✅ Cập nhật tồn kho theo số đếm</button>
+          <button id="btn-count-reset" class="ghost">Làm lại</button>
+        </div>
+      </div>
+
+      <h3 class="section-title">Vừa quét</h3>
+      <ul id="recent" class="recent"></ul>
+    </section>
+
+    <!-- TAB KHO -->
+    <section id="tab-stock" class="tab">
+      <input id="search" type="search" placeholder="🔎 Tìm tên, mã vạch, thương hiệu…" aria-label="Tìm kiếm">
+      <div id="chips" class="chips"></div>
+      <div id="stock-list"></div>
+    </section>
+
+    <!-- TAB CÀI ĐẶT -->
+    <section id="tab-settings" class="tab">
+      <div class="card">
+        <div class="card-head"><strong>Danh mục</strong></div>
+        <ul id="cat-list" class="cat-list"></ul>
+        <form id="cat-form" class="row">
+          <input id="cat-icon" maxlength="4" placeholder="🏷️" class="icon-input" aria-label="Biểu tượng">
+          <input id="cat-name" placeholder="Tên danh mục mới" required aria-label="Tên danh mục">
+          <button class="primary">Thêm</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><strong>Tự động phân loại</strong></div>
+        <label class="switch"><input type="checkbox" id="opt-online" checked> Tra cứu tên sản phẩm online (Open Food Facts)</label>
+        <label class="switch"><input type="checkbox" id="opt-autosave"> Tự lưu sản phẩm mới khi đã nhận diện được (không hỏi)</label>
+        <label class="switch"><input type="checkbox" id="opt-sound" checked> Âm thanh & rung khi quét</label>
+        <p class="muted" id="learned-info"></p>
+        <button id="btn-forget" class="ghost">Xóa những gì app đã học</button>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><strong>Dữ liệu</strong></div>
+        <div class="row wrap">
+          <button id="btn-export-csv" class="primary">⬇️ Xuất Excel (CSV)</button>
+          <button id="btn-export-json">💾 Sao lưu (JSON)</button>
+          <label class="button-like">📂 Khôi phục<input type="file" id="file-import" accept="application/json,.json" hidden></label>
+        </div>
+        <button id="btn-clear" class="danger">Xóa toàn bộ dữ liệu</button>
+      </div>
+      <p class="muted center">Dữ liệu được lưu ngay trên điện thoại này.</p>
+    </section>
+  </main>
+
+  <nav class="tabbar">
+    <button class="tabbtn active" data-tab="scan">📷<span>Quét</span></button>
+    <button class="tabbtn" data-tab="stock">📦<span>Kho</span></button>
+    <button class="tabbtn" data-tab="settings">⚙️<span>Cài đặt</span></button>
+  </nav>
+
+  <!-- Bảng sản phẩm (thêm mới / sửa) -->
+  <div id="sheet" class="sheet hidden" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+    <form id="item-form" class="sheet-body">
+      <div class="sheet-head">
+        <h2 id="sheet-title">Sản phẩm mới</h2>
+        <button type="button" class="ghost" id="sheet-close" aria-label="Đóng">✕</button>
+      </div>
+      <div class="product-top">
+        <img id="f-image" alt="" class="hidden">
+        <div>
+          <div class="barcode" id="f-barcode"></div>
+          <div class="muted small" id="f-origin"></div>
+        </div>
+      </div>
+      <div id="f-lookup" class="muted small"></div>
+      <label>Tên sản phẩm<input id="f-name" required placeholder="VD: Mì Hảo Hảo tôm chua cay"></label>
+      <label>Thương hiệu<input id="f-brand" placeholder="VD: Acecook"></label>
+      <label>Danh mục <span id="f-suggest" class="badge"></span>
+        <select id="f-category"></select>
+      </label>
+      <div class="grid2">
+        <label>Số lượng
+          <div class="stepper">
+            <button type="button" data-delta="-1">−</button>
+            <input id="f-qty" type="number" inputmode="numeric" min="0" value="1">
+            <button type="button" data-delta="1">+</button>
+          </div>
+        </label>
+        <label>Đơn vị<input id="f-unit" placeholder="cái, hộp, chai…" value="cái"></label>
+        <label>Giá (đ)<input id="f-price" type="number" inputmode="numeric" min="0" placeholder="0"></label>
+        <label>Vị trí<input id="f-location" placeholder="Kệ A2"></label>
+      </div>
+      <div class="row">
+        <button type="submit" class="primary big">Lưu</button>
+      </div>
+      <button type="button" id="f-delete" class="danger hidden">Xóa sản phẩm</button>
+    </form>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="vendor/html5-qrcode.min.js"></script>
+  <script src="categorize.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "name": "Kiểm Kho – Quét mã vạch",
+  "short_name": "Kiểm Kho",
+  "description": "Kiểm kho bằng điện thoại: quét mã vạch, tự phân loại sản phẩm.",
+  "lang": "vi",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f4f6f8",
+  "theme_color": "#0f766e",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

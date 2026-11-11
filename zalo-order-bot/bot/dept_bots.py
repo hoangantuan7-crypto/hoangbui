@@ -38,8 +38,10 @@ DESCRIPTIONS = {
     "lavabo": "/lavabo – tủ lavabo cần lên đơn xưởng / đang chờ xưởng",
     "datxuong": "/datxuong 12 – đã đặt xưởng tủ lavabo cho đơn #12",
     "bophan": "/bophan – bot này thuộc bộ phận nào",
+    "hop": "Gõ \"họp\" – bot báo cáo việc hôm nay của bộ phận",
+    "hoi": "Hỏi tự do, ví dụ: \"tủ của anh Nam đến đâu rồi?\" – bot trả lời dựa trên dữ liệu thật",
 }
-HELP_ORDER = ["choxuly", "xong", "chuyen", "don", "donmo", "xem", "huy", "giao", "nhac", "thieu", "ton", "nhap",
+HELP_ORDER = ["hoi", "hop", "choxuly", "xong", "chuyen", "don", "donmo", "xem", "huy", "giao", "nhac", "thieu", "ton", "nhap",
               "toithieu", "lavabo", "datxuong", "bophan"]
 
 
@@ -47,7 +49,8 @@ def dept_help(dept: str) -> str:
     icon, title = BOT_NAMES[dept]
     allowed = ALLOWED[dept]
     lines = [f"{icon} {title.upper()} – lệnh của bot này", ""]
-    lines += [DESCRIPTIONS[c] for c in HELP_ORDER if c in allowed or (c == "don" and dept in FREE_TEXT_ORDERS)]
+    lines += [DESCRIPTIONS[c] for c in HELP_ORDER
+              if c in allowed or c in ("hop", "hoi") or (c == "don" and dept in FREE_TEXT_ORDERS)]
     lines += ["", "Bot tự báo vào đây khi có việc mới của bộ phận, và nhắc lại nếu quá 30 phút chưa xử lý."]
     return "\n".join(lines)
 

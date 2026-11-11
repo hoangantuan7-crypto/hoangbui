@@ -23,6 +23,8 @@ HELP = """🤖 BOT ĐƠN HÀNG – hướng dẫn
 🔔 Tin khách: /choxuly – việc chưa xử lý | /xong K5 – đã xử lý
 ↪️ /chuyen K5 kho – chuyển việc sang bộ phận khác (sale, ketoan, kho, kythuat) | /bophan – chat này thuộc bộ phận nào
 
+🗣 Họp: "họp công ty", "họp bộ phận kho", /hop · Hỏi riêng: "Kho ơi, tủ anh Nam đến đâu rồi?"
+
 📊 Báo cáo:
   /thieu – khách nào đang thiếu hàng
   /lavabo – cần lên đơn tủ lavabo cho ai

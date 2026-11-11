@@ -167,6 +167,8 @@ if [ -n "$TG_TOKEN" ]; then
 fi
 grep -qE "^ORDER_BOT_REPORT_TIMES=" .env || env_set ORDER_BOT_REPORT_TIMES "08:00,17:00"
 grep -qE "^ORDER_BOT_REMIND_MINUTES=" .env || env_set ORDER_BOT_REMIND_MINUTES "30"
+grep -qE "^ORDER_BOT_MEETING_TIME=" .env || env_set ORDER_BOT_MEETING_TIME "18:00"
+MEETING_AT=$(env_get ORDER_BOT_MEETING_TIME)
 
 say "Build và chạy bot"
 "${COMPOSE[@]}" up -d --build order-bot
@@ -202,6 +204,8 @@ EOF
      -> Bot Điều phối sẽ gọi tên từng bot giao việc trong nhóm này.
   4. Nhờ ai nhắn vào Zalo shop: "lấy em 2 tủ lavabo 80 nhé"
      -> trong phòng: Bot Điều phối giao việc cho Bot Sale, Bot Sale xác nhận (khoảng 15 giây).
+  5. Họp: gõ "họp công ty" hoặc "họp bộ phận kho" trong phòng. Bot tự họp công ty lúc ${MEETING_AT:-18:00} mỗi ngày.
+     Hỏi riêng: "Kho ơi, tủ của anh Nam đến đâu rồi?" (cần ANTHROPIC_API_KEY trong .env).
 
 Mã ghép nối: $PAIR_CODE  (giữ kín – ai có mã này sẽ xem được tin khách)
 Xem log bot:      docker logs -f zalo-order-bot

@@ -63,6 +63,23 @@ Từ đó:
 Telegram không cho bot đọc tin của bot khác trong nhóm. Vì cả 5 bot chạy chung một chương trình, chúng phối hợp với
 nhau từ bên trong; trong nhóm anh vẫn thấy từng bot lên tiếng.
 
+### Nhắc khách chưa được trả lời (miễn phí, không cần AI)
+
+- **Khách nhắn mà quá 15 phút chưa được trả lời** (kể cả khi anh đã đọc tin nhưng quên trả lời): Bot Điều phối
+  nhắn riêng anh danh sách khách đang chờ, kèm câu khách hỏi và thời gian đã chờ. Quá 1 giờ thì nhắc lần 2.
+  Anh trả lời khách trên Zalo là bot tự thôi nhắc. Chỉ nhắc trong giờ làm việc 07:00–21:00.
+- **Khách có vẻ chưa được giải đáp đúng**: sau khi shop đã trả lời, khách nhắn kiểu "không phải, ý em là…",
+  "em hỏi cái khác mà", "anh chưa trả lời câu em hỏi", "???". Bot báo riêng anh ngay để anh trả lời lại.
+- Gõ `/chuatraloi` để xem ngay khách nào đang chờ. Cuộc họp 18:00 cũng báo số khách chờ, và khách chờ quá 1 giờ
+  nằm trong mục "Cần anh quyết".
+- Những tin chỉ để chốt chuyện như "ok anh nhé", "cảm ơn anh", sticker thì không cần trả lời, bot không nhắc.
+- Việc của từng bộ phận (K5…) **không tự đóng khi anh trả lời khách**. Việc chỉ đóng khi gõ `/xong K5`, vì trả lời
+  rồi chưa chắc vấn đề đã xong.
+
+Một số bản ZaloCRM ghi nhầm tin anh trả lời bằng điện thoại thành tin của khách. Script cài đặt tự lấy **tên nick
+Zalo của shop** (`ORDER_BOT_SHOP_NAMES`), nhờ đó bot vẫn nhận ra đó là shop trả lời và không báo nhầm thành việc.
+Đổi thời gian bằng `ORDER_BOT_REPLY_MINUTES` và `ORDER_BOT_WORK_HOURS` trong `.env`.
+
 ### Họp với các bot và hỏi riêng từng bộ phận
 
 **Họp:** gõ tự do trong phòng điều phối hoặc trong chat riêng với một bot.

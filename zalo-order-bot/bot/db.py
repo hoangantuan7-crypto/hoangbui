@@ -53,6 +53,18 @@ CREATE TABLE IF NOT EXISTS seen_messages (
     id TEXT PRIMARY KEY,
     seen_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS conv_state (       -- theo dõi khách chờ shop trả lời
+    conv_id TEXT PRIMARY KEY,
+    customer TEXT NOT NULL DEFAULT '',
+    phone TEXT DEFAULT '',
+    thread_type TEXT DEFAULT 'user',
+    waiting INTEGER NOT NULL DEFAULT 0,        -- 1 = khách đang chờ shop trả lời
+    wait_since TEXT,                           -- giờ (UTC) tin đầu tiên chưa được trả lời
+    last_customer_at TEXT,
+    last_customer_text TEXT DEFAULT '',
+    last_shop_at TEXT,
+    remind_level INTEGER NOT NULL DEFAULT 0    -- đã nhắc mấy lần cho lượt chờ này
+);
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -337,6 +349,45 @@ class Store:
     def prune_seen(self, days: int = 3):
         cutoff = (datetime.now() - timedelta(days=days)).isoformat()
         self.conn.execute("DELETE FROM seen_messages WHERE seen_at < ?", (cutoff,))
+        self.conn.commit()
+
+    # ---------- khách chờ shop trả lời ----------
+    def get_conv_state(self, conv_id: str):
+        return self.conn.execute("SELECT * FROM conv_state WHERE conv_id=?", (conv_id,)).fetchone()
+
+    def customer_said(self, conv_id: str, customer: str, phone: str, thread: str, at: str, text: str,
+                      needs_reply: bool):
+        """Ghi tin khách. Trả về trạng thái TRƯỚC tin này (để biết shop đã trả lời chưa)."""
+        prev = self.get_conv_state(conv_id)
+        if prev is None:
+            self.conn.execute("INSERT INTO conv_state(conv_id, customer, phone, thread_type) VALUES (?,?,?,?)",
+                              (conv_id, customer, phone, thread))
+        waiting = bool(prev and prev["waiting"])
+        if waiting:  # khách nhắn thêm khi đang chờ: gộp nội dung, giữ giờ bắt đầu chờ
+            lines = (prev["last_customer_text"] or "").splitlines()[-2:] + [text]
+            self.conn.execute("UPDATE conv_state SET customer=?, phone=?, last_customer_at=?, last_customer_text=? "
+                              "WHERE conv_id=?", (customer, phone, at, "\n".join(lines), conv_id))
+        elif needs_reply:
+            self.conn.execute("UPDATE conv_state SET customer=?, phone=?, thread_type=?, waiting=1, wait_since=?, "
+                              "last_customer_at=?, last_customer_text=?, remind_level=0 WHERE conv_id=?",
+                              (customer, phone, thread, at, at, text, conv_id))
+        else:
+            self.conn.execute("UPDATE conv_state SET last_customer_at=? WHERE conv_id=?", (at, conv_id))
+        self.conn.commit()
+        return prev
+
+    def shop_said(self, conv_id: str, at: str):
+        """Shop đã trả lời: hết chờ."""
+        self.conn.execute("INSERT INTO conv_state(conv_id, last_shop_at) VALUES (?,?) ON CONFLICT(conv_id) DO "
+                          "UPDATE SET waiting=0, remind_level=0, last_shop_at=excluded.last_shop_at", (conv_id, at))
+        self.conn.commit()
+
+    def waiting_convs(self, include_groups: bool = False):
+        where = "" if include_groups else " AND thread_type='user'"
+        return self.conn.execute(f"SELECT * FROM conv_state WHERE waiting=1{where} ORDER BY wait_since").fetchall()
+
+    def set_remind_level(self, conv_ids: list[str], level: int):
+        self.conn.executemany("UPDATE conv_state SET remind_level=? WHERE conv_id=?", [(level, c) for c in conv_ids])
         self.conn.commit()
 
     # ---------- cài đặt ----------

@@ -9,6 +9,7 @@ from datetime import datetime
 from .db import Store, fmt_qty
 from .departments import DEPTS, parse_dept
 from .dept_bots import BOT_NAMES, DIEUPHOI
+from .followup import parse_ts, short, utc_now, wait_text
 from .reports import _ago, _short, compute_shortages
 from .text import norm
 
@@ -59,10 +60,10 @@ def _extra(store: Store, dept: str, now: datetime) -> list[str]:
         if n:
             lines.append(f"   Đơn hàng đang mở: {n}")
     if dept == "kho":
-        short, demand, names = compute_shortages(store)
-        if short:
-            prods = sorted({p for rows in short.values() for _, p, *_ in rows})
-            lines.append(f"   Thiếu hàng: {len(short)} khách chờ – {', '.join(prods[:5])}")
+        missing, _, _ = compute_shortages(store)
+        if missing:
+            prods = sorted({p for rows in missing.values() for _, p, *_ in rows})
+            lines.append(f"   Thiếu hàng: {len(missing)} khách chờ – {', '.join(prods[:5])}")
     if dept in ("kho", "kythuat"):
         todo = waiting = late = 0
         for it in store.open_items():
@@ -105,13 +106,19 @@ def dept_report(store: Store, dept: str, now: datetime, detail: bool = False, ov
 def decisions(store: Store, now: datetime, dept: str | None = None, overdue_min: int = 30) -> list[str]:
     """Những việc cần anh quyết / để ý."""
     out = []
+    if dept is None:  # khách chờ trả lời quá 1 giờ
+        utc = utc_now()
+        for r in store.waiting_convs():
+            mins = (utc - parse_ts(r["wait_since"])).total_seconds() / 60
+            if mins >= 60:
+                out.append(f"{r['customer']} chờ anh trả lời {wait_text(mins)}: “{short(r['last_customer_text'], 60)}”")
     for d in ([dept] if dept else DEPTS):
         for lead in store.open_leads(d):
             if (now - datetime.fromisoformat(lead["created_at"])).total_seconds() >= overdue_min * 60:
                 out.append(f"K{lead['id']} {lead['customer']} ({DEPTS[d][1]}) chờ {_ago(lead['created_at'], now)}: "
                            f"“{_short(lead['text'], 60)}”")
     if dept in (None, "kho"):
-        short, demand, names = compute_shortages(store)
+        _, demand, names = compute_shortages(store)
         stock = store.stock_map()
         for key, need in demand.items():
             have = stock[key]["qty"] if key in stock else 0
@@ -128,8 +135,11 @@ def build_meeting(store: Store, scope: str, dept: str | None, now: datetime | No
     kind = "tự động" if auto else ""
     if scope == COMPANY:
         new, done = store.leads_since(since)
+        waiting = len(store.waiting_convs())
         msgs = [(DIEUPHOI, f"🧭 Bot Điều phối: Bắt đầu HỌP CÔNG TY {kind} – {now:%H:%M %d/%m}.".replace("  ", " ")
-                 + f"\nHôm nay nhận {len(new)} việc từ tin khách, đã xong {len(done)}. Mời từng bộ phận báo cáo.")]
+                 + f"\nHôm nay nhận {len(new)} việc từ tin khách, đã xong {len(done)}."
+                 + (f"\n💬 Đang có {waiting} khách chờ anh trả lời." if waiting else "\n💬 Không có khách nào chờ trả lời.")
+                 + "\nMời từng bộ phận báo cáo.")]
         msgs += [(d, dept_report(store, d, now, overdue_min=overdue_min)) for d in DEPTS]
     else:
         icon, title = BOT_NAMES[dept]

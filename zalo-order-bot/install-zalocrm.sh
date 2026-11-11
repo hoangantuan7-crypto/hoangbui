@@ -96,6 +96,23 @@ fi
 ACCOUNT_ID=$(cut -d'|' -f1 <<<"${ACCOUNTS[$((CHOICE - 1))]}")
 echo "Dùng tài khoản số $CHOICE."
 
+say "Nhận ra tin shop trả lời"
+# Tên/mã nick Zalo của shop: lấy từ tài khoản và từ các tin shop đã gửi. Tin anh trả lời bằng điện thoại có thể
+# bị ZaloCRM ghi nhầm là tin khách – bot dựa vào tên/mã này để biết đó là shop trả lời.
+SHOP_NAMES=$(sql "SELECT string_agg(DISTINCT replace(n, ',', ' '), ',') FROM (
+                    SELECT display_name AS n FROM zalo_accounts WHERE org_id='$ORG_ID' AND display_name <> ''
+                    UNION SELECT m.sender_name FROM messages m JOIN conversations c ON c.id = m.conversation_id
+                          WHERE c.org_id='$ORG_ID' AND m.sender_type='self' AND m.sender_name <> '') t")
+SHOP_UIDS=$(sql "SELECT string_agg(zalo_uid, ',') FROM zalo_accounts WHERE org_id='$ORG_ID' AND zalo_uid <> ''")
+SHOP_COUNT=$(printf '%s' "$SHOP_NAMES" | awk -F, 'NF{print NF}')
+echo "Đã nhận ${SHOP_COUNT:-0} tên nick shop."
+WRONG=$(sql "SELECT count(*) FROM messages m JOIN conversations c ON c.id = m.conversation_id
+             WHERE c.org_id='$ORG_ID' AND m.sender_type='contact' AND m.sent_at > now() - interval '7 days'
+               AND m.sender_name IN (SELECT display_name FROM zalo_accounts WHERE org_id='$ORG_ID')" 2>/dev/null || echo 0)
+if [ "${WRONG:-0}" -gt 0 ] 2>/dev/null; then
+  echo "Phát hiện $WRONG tin shop gửi trong 7 ngày bị ZaloCRM ghi nhầm là tin khách – bot sẽ tự nhận ra đúng."
+fi
+
 say "Nhận thông báo qua Telegram"
 CUR_TG=$(env_get ORDER_BOT_TELEGRAM_TOKEN)
 if [ -n "$CUR_TG" ]; then HINT="Enter = giữ token cũ"; else HINT="Enter = bỏ qua, báo qua nhóm Zalo"; fi
@@ -159,6 +176,10 @@ say "Ghi cấu hình vào .env"
 env_set ORDER_BOT_API_KEY "$API_KEY"
 env_set ORDER_BOT_WEBHOOK_SECRET "$SECRET"
 env_set ORDER_BOT_ACCOUNT_ID "$ACCOUNT_ID"
+env_set ORDER_BOT_SHOP_NAMES "$SHOP_NAMES"
+env_set ORDER_BOT_SHOP_UIDS "$SHOP_UIDS"
+grep -qE "^ORDER_BOT_REPLY_MINUTES=" .env || env_set ORDER_BOT_REPLY_MINUTES "15"
+grep -qE "^ORDER_BOT_WORK_HOURS=" .env || env_set ORDER_BOT_WORK_HOURS "07:00-21:00"
 env_set ORDER_BOT_REPORT_GROUP "${GROUP:-Bot đơn hàng}"
 env_set ORDER_BOT_TELEGRAM_TOKEN "$TG_TOKEN"
 [ -z "$PAIR_CODE" ] || env_set ORDER_BOT_PAIR_CODE "$PAIR_CODE"

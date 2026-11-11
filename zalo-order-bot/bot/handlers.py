@@ -20,6 +20,7 @@ HELP = """🤖 BOT ĐƠN HÀNG – hướng dẫn
 📦 /nhap vòi sen 20 – nhập kho | /ton vòi sen 15 – đặt lại tồn | /ton – xem kho
 📉 /toithieu vòi sen 5 – tồn tối thiểu để bot nhắc nhập
 
+💬 /chuatraloi – khách đang chờ anh trả lời
 🔔 Tin khách: /choxuly – việc chưa xử lý | /xong K5 – đã xử lý
 ↪️ /chuyen K5 kho – chuyển việc sang bộ phận khác (sale, ketoan, kho, kythuat) | /bophan – chat này thuộc bộ phận nào
 

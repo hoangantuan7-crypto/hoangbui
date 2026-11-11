@@ -59,7 +59,7 @@ class Telegram:
                                         "allowed_updates": ["message"]}, timeout=timeout + 15) or []
 
     def get_me(self) -> dict:
-        return self.call("getMe")
+        return self.call("getMe", timeout=15)
 
 
 PAIR_RE = re.compile(r"^/(?:batdau|start)(?:@\S+)?\s*(\S*)", re.IGNORECASE)

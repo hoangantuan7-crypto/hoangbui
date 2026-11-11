@@ -787,6 +787,9 @@ def main():
     bot.reply_minutes = int(os.environ.get("REPLY_MINUTES", "15"))
     bot.work_hours = os.environ.get("WORK_HOURS", "07:00-21:00").strip()
     bot.meeting_time = os.environ.get("MEETING_TIME", "18:00").strip()  # để trống = tắt họp tự động
+    # Mở cổng nhận webhook TRƯỚC: việc hỏi tên 5 bot Telegram có thể mất vài giây
+    port, secret = int(os.environ.get("PORT", "8090")), os.environ.get("ZALOCRM_WEBHOOK_SECRET", "")
+    threading.Thread(target=serve, args=(bot, port, secret), daemon=True).start()
     threading.Thread(target=bot.scheduler, args=(times, remind), daemon=True).start()
     bot.load_usernames()
     for name in bot.bots:
@@ -797,7 +800,8 @@ def main():
     poll = int(os.environ.get("POLL_SECONDS", "15"))
     if poll > 0:
         threading.Thread(target=bot.poller, args=(poll,), daemon=True).start()
-    serve(bot, int(os.environ.get("PORT", "8090")), os.environ.get("ZALOCRM_WEBHOOK_SECRET", ""))
+    while True:  # các phần của bot chạy trong luồng riêng; luồng chính chỉ giữ chương trình sống
+        time.sleep(3600)
 
 
 if __name__ == "__main__":

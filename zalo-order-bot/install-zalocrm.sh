@@ -200,12 +200,26 @@ MEETING_AT=$(env_get ORDER_BOT_MEETING_TIME)
 say "Build và chạy bot"
 "${COMPOSE[@]}" up -d --build order-bot
 
-say "Kiểm tra ZaloCRM gọi được bot"
-sleep 3
-if "${BASE[@]}" exec -T app node -e "fetch('$WEBHOOK_URL').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
+say "Kiểm tra ZaloCRM gọi được bot (đợi tối đa 60 giây cho ZaloCRM và bot khởi động xong)"
+SEEN_BOT=0
+TRY=0
+while [ $TRY -lt 20 ]; do
+  TRY=$((TRY + 1))
+  sleep 3
+  if "${BASE[@]}" exec -T app node -e "fetch('$WEBHOOK_URL').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" \
+       >/dev/null 2>&1; then
+    SEEN_BOT=1
+    break
+  fi
+  printf '.'
+done
+echo
+if [ "$SEEN_BOT" = 1 ]; then
   echo "OK – ZaloCRM đã thấy bot."
 else
-  die "ZaloCRM chưa gọi được bot. Xem log: docker logs zalo-order-bot"
+  echo "----- 20 dòng log gần nhất của bot -----"
+  docker logs --tail 20 zalo-order-bot 2>&1 || true
+  die "ZaloCRM chưa gọi được bot sau 60 giây. Chụp màn hình phần log ở trên gửi lại để kiểm tra."
 fi
 
 if [ -n "$TG_TOKEN" ]; then

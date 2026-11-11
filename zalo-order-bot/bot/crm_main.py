@@ -10,6 +10,9 @@ Biến môi trường:
   REPORT_TIMES            mặc định "08:00,17:00"
   POLL_SECONDS            bao lâu hỏi ZaloCRM tin mới 1 lần (giây), mặc định 15; 0 = chỉ dùng webhook
   SCAN_GROUPS             "1" = quét cả tin trong nhóm Zalo (mặc định chỉ chat riêng với khách)
+  SHOP_NAMES / SHOP_UIDS  tên / mã nick Zalo của shop (script cài đặt tự điền) – để nhận ra tin shop trả lời
+  REPLY_MINUTES           khách chờ bao nhiêu phút chưa được trả lời thì nhắc, mặc định 15
+  WORK_HOURS              giờ làm việc để nhắc, mặc định 07:00-21:00
   MEETING_TIME            giờ họp công ty tự động mỗi ngày, mặc định 18:00 (để trống = tắt)
   REMIND_MINUTES          nhắc lại tin khách chưa xử lý sau bao nhiêu phút, mặc định 30
   PORT                    cổng nhận webhook, mặc định 8090
@@ -40,6 +43,7 @@ from .parser import looks_like_order, parse_command, parse_order
 from .dept_bots import ALLOWED, BOT_NAMES, DIEUPHOI, FREE_TEXT_ORDERS, dept_help, not_allowed
 from .departments import DEPTS, ROOM, TONG, dept_icon, dept_list, dept_name, parse_dept, route
 from .ai_assistant import ask_bot, parse_address
+from .followup import dissatisfied, in_work_hours, needs_reply, parse_ts, short, utc_now, wait_text, waiting_lines
 from .meeting import COMPANY, build_meeting, flatten, parse_meeting
 from .reports import full_report, lead_line, report_leads
 from .text import norm
@@ -72,6 +76,12 @@ class CRMBot:
         self.ask = ask_bot            # hỏi đáp bằng AI (thay được trong test)
         self.remind_minutes = 30
         self.meeting_time = "18:00"   # họp công ty tự động mỗi ngày
+        # Nick Zalo của shop: tin gửi từ điện thoại có thể bị ZaloCRM ghi nhầm là tin khách -> nhận ra bằng tên/mã
+        self.shop_names: set[str] = set()
+        self.shop_uids: set[str] = set()
+        self.reply_minutes = 15       # khách chờ quá ngần này phút chưa được trả lời -> nhắc anh
+        self.second_minutes = 60      # vẫn chưa trả lời -> nhắc lần 2
+        self.work_hours = "07:00-21:00"
         self.scan_groups = scan_groups  # mặc định chỉ quét chat riêng; nhóm cộng đồng dễ báo nhầm
         self.lock = threading.Lock()
         self.recent_out: deque[str] = deque(maxlen=50)  # chống bot tự đọc lại tin của chính nó
@@ -129,13 +139,9 @@ class CRMBot:
             return
         if event not in ("message.received", "message.sent"):
             return
-        if data.get("contentType") not in (None, "", "text"):
-            log.info("Bỏ qua: không phải tin chữ")
-            return
         text = (data.get("content") or "").strip()
-        if not text:
-            return
-        is_self = event == "message.sent"
+        is_self = (event == "message.sent" or str(data.get("senderUid") or "") in self.shop_uids
+                   or (bool(data.get("senderName")) and norm(data["senderName"]) in self.shop_names))
         if is_self and text in self.recent_out:
             return
         conv = self.crm.conversation(data.get("conversationId", ""))
@@ -145,6 +151,12 @@ class CRMBot:
         report = self.report_conv()
         contact = conv.get("contact") or {}
         name, phone = contact.get("fullName") or "", contact.get("phone") or ""
+        is_text = data.get("contentType") in (None, "", "text") and bool(text)
+        if not (report and conv["id"] == report["id"]):
+            self.track_reply(conv, name, phone, data, is_self, text if is_text else "")
+        if not is_text:
+            log.info("Bỏ qua: không phải tin chữ")
+            return
 
         target = None  # bộ phận nhận tin (None = chat tổng)
         with self.lock:
@@ -159,8 +171,6 @@ class CRMBot:
                     if reply.startswith("✅ Đã ghi đơn"):
                         self.store.close_leads(conv_id=conv["id"])  # đã lên đơn -> tin khách coi như xong
                     reply = f"[chat với {name}]\n{reply}"
-                else:
-                    self.store.mark_conv_replied(conv["id"])  # anh đã trả lời khách -> thôi nhắc lại
             elif not parse_command(text) and (conv.get("threadType") != "group" or self.scan_groups):
                 reply, target, lead_id = self._customer_message(text, conv["id"], name, phone)
             else:
@@ -280,6 +290,57 @@ class CRMBot:
             return m.group(1).lower() == self.usernames.get(botname, "").lower()
         return botname == DIEUPHOI
 
+    # ---------- Khách chờ trả lời ----------
+    def track_reply(self, conv: dict, name: str, phone: str, data: dict, is_self: bool, text: str):
+        """Ghi ai nói cuối trong từng cuộc chat; khách tỏ ý chưa được giải đáp đúng -> báo riêng anh ngay."""
+        thread = conv.get("threadType") or "user"
+        at = parse_ts(data.get("sentAt")).isoformat()
+        if is_self:
+            self.store.shop_said(conv["id"], at)
+            return
+        if not text:
+            return  # khách gửi sticker/ảnh: không tính là câu hỏi cần trả lời
+        prev = self.store.customer_said(conv["id"], name or "Khách", phone, thread, at, text, needs_reply(text))
+        if (dissatisfied(text) and prev is not None and prev["last_shop_at"]
+                and (thread == "user" or self.scan_groups)):
+            who = (name or "Khách") + (f" ({phone})" if phone else "")
+            self.report_problem(f"⚠️ {who} có vẻ CHƯA ĐƯỢC GIẢI ĐÁP ĐÚNG:\n💬 “{short(text, 200)}”\n"
+                                "→ Anh xem lại câu khách hỏi trước đó và trả lời lại giúp em.")
+
+    def unanswered_text(self, now: datetime | None = None, min_minutes: float = 0) -> str:
+        now = now or utc_now()
+        rows = [r for r in self.store.waiting_convs(self.scan_groups)
+                if (now - parse_ts(r["wait_since"])).total_seconds() >= min_minutes * 60]
+        if not rows:
+            return "✅ Không có khách nào đang chờ anh trả lời."
+        return "\n".join([f"💬 {len(rows)} KHÁCH ĐANG CHỜ ANH TRẢ LỜI"] + waiting_lines(rows, now)
+                         + ["→ Trả lời khách trên Zalo là bot tự thôi nhắc."])
+
+    def check_unanswered(self, now: datetime | None = None, local: datetime | None = None) -> bool:
+        """Nhắc khách chờ quá reply_minutes (lần 1) và quá second_minutes (lần 2), chỉ trong giờ làm việc."""
+        now, local = now or utc_now(), local or datetime.now()
+        if not in_work_hours(local, self.work_hours):
+            return False
+        first, second = [], []
+        for r in self.store.waiting_convs(self.scan_groups):
+            mins = (now - parse_ts(r["wait_since"])).total_seconds() / 60
+            if r["remind_level"] == 0 and mins >= self.reply_minutes:
+                first.append(r)
+            elif r["remind_level"] == 1 and mins >= self.second_minutes:
+                second.append(r)
+        sent = False
+        if first:
+            self.store.set_remind_level([r["conv_id"] for r in first], 1)
+            sent |= self.report_problem("\n".join(
+                [f"💬 {len(first)} KHÁCH ĐANG CHỜ ANH TRẢ LỜI"] + waiting_lines(first, now)
+                + ["→ Trả lời khách trên Zalo là bot tự thôi nhắc. Xem tất cả: /chuatraloi"]))
+        if second:
+            self.store.set_remind_level([r["conv_id"] for r in second], 2)
+            sent |= self.report_problem("\n".join(
+                [f"⏰ NHẮC LẦN 2 – {len(second)} KHÁCH CHỜ QUÁ {wait_text(self.second_minutes)}"]
+                + waiting_lines(second, now)))
+        return sent
+
     # ---------- Họp & hỏi đáp ----------
     def _speak(self, botname: str, group_id: str, text: str):
         """1 bot lên tiếng trong nhóm; bot đó chưa có hoặc chưa vào nhóm thì Bot Điều phối nói thay."""
@@ -381,7 +442,8 @@ class CRMBot:
                 self.handle_event({"source": "hỏi định kỳ",
                                    "event": "message.sent" if m.get("senderType") == "self" else "message.received",
                                    "data": {"messageId": m.get("id"), "conversationId": conv["id"],
-                                            "content": m.get("content"), "contentType": m.get("contentType")}})
+                                            "content": m.get("content"), "contentType": m.get("contentType"),
+                                            "senderName": m.get("senderName"), "sentAt": m.get("sentAt")}})
         if stamps and max(stamps) > cursor:
             self.store.set_setting("poll_cursor", max(stamps))
         if count:
@@ -474,6 +536,8 @@ class CRMBot:
         if cmd and cmd.name == "huydangky":
             self.store.subscribe(chat_id, sender, False)
             return "🔕 Đã ngắt kết nối. Gõ /batdau <mã> để kết nối lại."
+        if cmd and cmd.name == "chuatraloi":
+            return self.unanswered_text()
         my_dept = bot_dept or self.store.chat_dept(chat_id)
         if cmd and cmd.name == "choxuly":
             with self.lock:
@@ -526,6 +590,7 @@ class CRMBot:
             now = datetime.now()
             try:
                 self.remind_pending(remind_minutes, now)
+                self.check_unanswered()
             except Exception:  # noqa: BLE001
                 log.exception("Nhắc tin khách thất bại")
             tag = f"{now.date()} {now:%H:%M}"
@@ -659,6 +724,10 @@ def main():
     times = [t.strip() for t in os.environ.get("REPORT_TIMES", "08:00,17:00").split(",") if t.strip()]
     remind = int(os.environ.get("REMIND_MINUTES", "30"))
     bot.remind_minutes = remind
+    bot.shop_names = {norm(n) for n in os.environ.get("SHOP_NAMES", "").split(",") if n.strip()}
+    bot.shop_uids = {u.strip() for u in os.environ.get("SHOP_UIDS", "").split(",") if u.strip()}
+    bot.reply_minutes = int(os.environ.get("REPLY_MINUTES", "15"))
+    bot.work_hours = os.environ.get("WORK_HOURS", "07:00-21:00").strip()
     bot.meeting_time = os.environ.get("MEETING_TIME", "18:00").strip()  # để trống = tắt họp tự động
     threading.Thread(target=bot.scheduler, args=(times, remind), daemon=True).start()
     bot.load_usernames()

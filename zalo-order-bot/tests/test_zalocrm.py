@@ -59,12 +59,15 @@ class CRMBotTest(unittest.TestCase):
         self.bot.handle_event(msg("message.received", "c-group", "/choxuly"))
         self.assertIn("Không có tin khách", self.crm.sent[-1][2])
 
-    def test_payment_message_and_owner_reply_stops_reminder(self):
+    def test_payment_task_stays_open_after_reply_until_xong(self):
+        # Trả lời khách chưa chắc đã xử lý xong vấn đề: việc vẫn được nhắc cho tới khi gõ /xong
         from datetime import datetime, timedelta
         self.bot.handle_event(msg("message.received", "c-nam", "Em chuyển khoản rồi nhé anh"))
         self.assertIn("CHUYỂN KHOẢN", self.crm.sent[0][2])
         self.bot.handle_event(msg("message.sent", "c-nam", "Dạ em nhận được rồi ạ"))
-        self.assertFalse(self.bot.remind_pending(30, datetime.now() + timedelta(minutes=31)))
+        self.assertTrue(self.bot.remind_pending(30, datetime.now() + timedelta(minutes=31)))
+        self.bot.store.close_leads(1)
+        self.assertFalse(self.bot.remind_pending(30, datetime.now() + timedelta(minutes=120)))
 
     def test_polling_picks_up_new_messages_once_and_ignores_history(self):
         CONVS["c-nam"]["lastMessageAt"] = "2026-11-11T14:00:00.000Z"

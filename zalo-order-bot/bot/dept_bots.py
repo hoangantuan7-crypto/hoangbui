@@ -13,7 +13,7 @@ COMMON = {"help", "choxuly", "xong", "chuyen", "bophan", "dangky", "huydangky"}
 
 # Lệnh riêng của từng bot bộ phận (Bot Điều phối dùng được tất cả)
 ALLOWED = {
-    "sale": COMMON | {"don", "donmo", "xem", "huy", "nhac", "giao"},
+    "sale": COMMON | {"don", "donmo", "xem", "huy", "nhac", "giao", "chuatraloi"},
     "ketoan": COMMON | {"donmo", "xem"},
     "kho": COMMON | {"thieu", "ton", "nhap", "toithieu", "giao", "lavabo", "datxuong", "donmo", "xem"},
     "kythuat": COMMON | {"lavabo", "xem"},
@@ -38,10 +38,11 @@ DESCRIPTIONS = {
     "lavabo": "/lavabo – tủ lavabo cần lên đơn xưởng / đang chờ xưởng",
     "datxuong": "/datxuong 12 – đã đặt xưởng tủ lavabo cho đơn #12",
     "bophan": "/bophan – bot này thuộc bộ phận nào",
+    "chuatraloi": "/chuatraloi – khách nào đang chờ anh trả lời",
     "hop": "Gõ \"họp\" – bot báo cáo việc hôm nay của bộ phận",
     "hoi": "Hỏi tự do, ví dụ: \"tủ của anh Nam đến đâu rồi?\" – bot trả lời dựa trên dữ liệu thật",
 }
-HELP_ORDER = ["hoi", "hop", "choxuly", "xong", "chuyen", "don", "donmo", "xem", "huy", "giao", "nhac", "thieu", "ton", "nhap",
+HELP_ORDER = ["hoi", "hop", "chuatraloi", "choxuly", "xong", "chuyen", "don", "donmo", "xem", "huy", "giao", "nhac", "thieu", "ton", "nhap",
               "toithieu", "lavabo", "datxuong", "bophan"]
 
 

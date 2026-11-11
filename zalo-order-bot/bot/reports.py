@@ -3,6 +3,7 @@ from collections import defaultdict
 from datetime import datetime
 
 from .db import Store, fmt_qty
+from .departments import DEPTS, TONG, dept_icon, dept_name
 
 
 def _date(iso: str) -> str:
@@ -129,7 +130,6 @@ def report_open_orders(store: Store) -> str:
     return "\n".join(lines)
 
 
-KIND_ICON = {"order": "🛒", "payment": "💰"}
 
 
 def _ago(iso: str, now: datetime) -> str:
@@ -148,17 +148,27 @@ def _short(text: str, limit: int = 120) -> str:
 
 def lead_line(lead, now: datetime) -> str:
     who = lead["customer"] + (f" ({lead['phone']})" if lead["phone"] else "")
-    return f"  {KIND_ICON.get(lead['kind'], '•')} K{lead['id']} {who} – {_ago(lead['created_at'], now)}: “{_short(lead['text'])}”"
+    return f"  {dept_icon(lead['kind'])} K{lead['id']} {who} – {_ago(lead['created_at'], now)}: “{_short(lead['text'])}”"
 
 
-def report_leads(store: Store, now: datetime | None = None) -> str:
+def report_leads(store: Store, now: datetime | None = None, dept: str | None = None) -> str:
+    """Tin khách chờ xử lý. dept=None: tất cả, chia theo bộ phận; có dept: chỉ bộ phận đó."""
     now = now or datetime.now()
-    leads = store.open_leads()
+    dept = None if dept == TONG else dept
+    leads = store.open_leads(dept)
+    where = f" – {dept_name(dept).upper()}" if dept else ""
     if not leads:
-        return "✅ Không có tin khách đặt hàng nào đang chờ xử lý."
-    lines = [f"🔔 TIN KHÁCH CHỜ XỬ LÝ – {len(leads)}"]
-    lines += [lead_line(lead, now) for lead in leads]
-    lines.append("  → Xử lý xong gõ: /xong K<mã> (vd /xong K5)")
+        return "✅ Không có tin khách nào đang chờ xử lý" + (f" ({dept_name(dept)})" if dept else "") + "."
+    lines = [f"🔔 TIN KHÁCH CHỜ XỬ LÝ{where} – {len(leads)}"]
+    if dept:
+        lines += [lead_line(lead, now) for lead in leads]
+    else:
+        for code in list(DEPTS) + sorted({lead["kind"] for lead in leads} - set(DEPTS)):
+            group = [lead for lead in leads if lead["kind"] == code]
+            if group:
+                lines.append(f"{dept_icon(code)} {dept_name(code)} ({len(group)})")
+                lines += [lead_line(lead, now) for lead in group]
+    lines.append("  → Xong gõ /xong K<mã> · Chuyển bộ phận: /chuyen K<mã> <bộ phận>")
     return "\n".join(lines)
 
 

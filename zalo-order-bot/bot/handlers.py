@@ -4,6 +4,7 @@ import re
 from . import reports
 from .ai_parser import ai_available, ai_parse_order
 from .db import Store, fmt_qty
+from .departments import TONG, dept_icon, dept_list, dept_name, parse_dept
 from .text import norm
 from .parser import looks_like_order, parse_command, parse_order, parse_product_qty
 
@@ -19,7 +20,8 @@ HELP = """🤖 BOT ĐƠN HÀNG – hướng dẫn
 📦 /nhap vòi sen 20 – nhập kho | /ton vòi sen 15 – đặt lại tồn | /ton – xem kho
 📉 /toithieu vòi sen 5 – tồn tối thiểu để bot nhắc nhập
 
-🔔 Tin khách đặt hàng: /choxuly – xem tin chưa xử lý | /xong K5 – đã xử lý
+🔔 Tin khách: /choxuly – việc chưa xử lý | /xong K5 – đã xử lý
+↪️ /chuyen K5 kho – chuyển việc sang bộ phận khác (sale, ketoan, kho, kythuat) | /bophan – chat này thuộc bộ phận nào
 
 📊 Báo cáo:
   /thieu – khách nào đang thiếu hàng
@@ -136,6 +138,17 @@ def _handle_command(store: Store, name: str, args: str, chat_id: str, sender: st
         if not store.close_leads(int(m.group(1))):
             raise ValueError(f"Không có tin K{m.group(1)} đang chờ")
         return f"👍 Đã xử lý tin K{m.group(1)}"
+    if name == "chuyen":
+        parts = args.split()
+        m = re.match(r"^[kK#]?(\d+)$", parts[0]) if parts else None
+        dept = parse_dept(parts[1]) if len(parts) > 1 else None
+        if not m or dept in (None, TONG):
+            raise ValueError(f"Cú pháp: /chuyen K<mã> <bộ phận>. Bộ phận: {dept_list()}")
+        if not store.set_lead_dept(int(m.group(1)), dept):
+            raise ValueError(f"Không có tin K{m.group(1)} đang chờ")
+        return f"↪️ Đã chuyển K{m.group(1)} sang {dept_icon(dept)} {dept_name(dept)}"
+    if name == "bophan":
+        return "Chat này nhận tất cả tin."
     if name == "thieu":
         return reports.report_shortage(store)
     if name == "lavabo":

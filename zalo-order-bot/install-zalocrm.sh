@@ -8,7 +8,20 @@
 #      (nút "Tạo key"/"Lưu webhook" trên giao diện ZaloCRM hiện bị lỗi nên không dùng).
 #   2. Cấu hình Webhook của ZaloCRM trỏ về bot, có chữ ký bí mật.
 #   3. Ghi cấu hình vào .env, build và chạy container order-bot.
+#
+# Chạy không hỏi (dùng cho GitHub Actions): khi không có bàn phím (stdin không phải terminal),
+# script lấy câu trả lời từ biến môi trường và không in tên/SĐT ra log:
+#   REPORT_GROUP     tên nhóm Zalo nhận báo đơn (mặc định giữ giá trị cũ hoặc "Bot đơn hàng")
+#   ACCOUNT_NUMBER   số thứ tự tài khoản Zalo (mặc định 1 = tài khoản đang kết nối gần nhất)
+#   REPLACE_WEBHOOK  "c" để cho phép thay webhook đang trỏ chỗ khác
 set -euo pipefail
+
+INTERACTIVE=0; [ -t 0 ] && INTERACTIVE=1
+ask() {  # ask "câu hỏi" BIẾN_MÔI_TRƯỜNG giá_trị_mặc_định
+  local answer=""
+  if [ "$INTERACTIVE" = 1 ]; then read -rp "$1" answer; else answer="${!2:-}"; fi
+  printf '%s' "${answer:-$3}"
+}
 
 COMPOSE=(docker compose -f docker-compose.yml -f zalo-order-bot/docker-compose.zalocrm.yml)
 WEBHOOK_URL="http://order-bot:8090/"
@@ -64,26 +77,31 @@ mapfile -t ACCOUNTS < <(sql "SELECT id || '|' || coalesce(display_name,'?') || '
 [ ${#ACCOUNTS[@]} -gt 0 ] || die "ZaloCRM chưa có tài khoản Zalo nào. Vào web ZaloCRM thêm và quét QR trước."
 for i in "${!ACCOUNTS[@]}"; do
   IFS='|' read -r _ name phone status <<<"${ACCOUNTS[$i]}"
-  echo "  $((i + 1)). $name $phone ($status)"
+  if [ "$INTERACTIVE" = 1 ]; then
+    echo "  $((i + 1)). $name $phone ($status)"
+  else  # log GitHub có thể công khai: không in tên, SĐT
+    echo "  $((i + 1)). ${name:0:1}*** ($status)"
+  fi
 done
 CHOICE=1
 if [ ${#ACCOUNTS[@]} -gt 1 ]; then
-  read -rp "Chọn số tài khoản Zalo [1]: " CHOICE; CHOICE=${CHOICE:-1}
+  CHOICE=$(ask "Chọn số tài khoản Zalo [1]: " ACCOUNT_NUMBER 1)
 fi
+[[ "$CHOICE" =~ ^[0-9]+$ ]] && [ "$CHOICE" -ge 1 ] && [ "$CHOICE" -le ${#ACCOUNTS[@]} ] || die "Số tài khoản không hợp lệ: $CHOICE"
 ACCOUNT_ID=$(cut -d'|' -f1 <<<"${ACCOUNTS[$((CHOICE - 1))]}")
-[ -n "$ACCOUNT_ID" ] || die "Lựa chọn không hợp lệ."
+echo "Dùng tài khoản số $CHOICE."
 
 say "Nhóm Zalo nhận báo đơn"
 CUR_GROUP=$(env_get ORDER_BOT_REPORT_GROUP)
-read -rp "Tên nhóm Zalo [${CUR_GROUP:-Bot đơn hàng}]: " GROUP
-GROUP=${GROUP:-${CUR_GROUP:-Bot đơn hàng}}
+GROUP=$(ask "Tên nhóm Zalo [${CUR_GROUP:-Bot đơn hàng}]: " REPORT_GROUP "${CUR_GROUP:-Bot đơn hàng}")
+echo "Nhóm báo đơn: $GROUP"
 
 say "Cấu hình Webhook ZaloCRM -> bot"
 OLD_URL=$(setting webhook_url)
 if [ -n "$OLD_URL" ] && [ "$OLD_URL" != "$WEBHOOK_URL" ]; then
-  echo "ZaloCRM đang gửi webhook tới: $OLD_URL"
-  read -rp "Thay bằng bot báo đơn? (c/k) [k]: " OK
-  [ "${OK:-k}" = "c" ] || die "Đã dừng, không thay đổi gì."
+  [ "$INTERACTIVE" = 1 ] && echo "ZaloCRM đang gửi webhook tới: $OLD_URL" || echo "ZaloCRM đang gửi webhook tới một địa chỉ khác."
+  OK=$(ask "Thay bằng bot báo đơn? (c/k) [k]: " REPLACE_WEBHOOK k)
+  [ "$OK" = "c" ] || die "Đã dừng, không thay đổi gì. (Trên GitHub: bật ô 'Cho phép thay webhook' rồi chạy lại.)"
 fi
 SECRET=$(env_get ORDER_BOT_WEBHOOK_SECRET)
 SECRET=${SECRET:-$(openssl rand -hex 24)}

@@ -16,6 +16,7 @@ Biến môi trường:
 import json
 import logging
 import os
+import sys
 import threading
 import time
 from collections import deque
@@ -207,6 +208,11 @@ def main():
     store = Store(os.environ.get("DB_PATH", "orders.db"))
     bot = CRMBot(store, ZaloCRM(url, key), os.environ.get("ZALOCRM_REPORT_GROUP", ""),
                  os.environ.get("ZALOCRM_ACCOUNT_ID", ""))
+    if "--send-report" in sys.argv:  # gửi báo cáo ngay rồi thoát (nút trên GitHub Actions)
+        if not bot.send_report(full_report(store)):
+            raise SystemExit("Chưa gửi được: bot chưa tìm thấy nhóm Zalo báo đơn hoặc tài khoản Zalo. "
+                             "Hãy nhắn 1 tin vào nhóm rồi thử lại.")
+        return
     times = [t.strip() for t in os.environ.get("REPORT_TIMES", "08:00,17:00").split(",") if t.strip()]
     remind = int(os.environ.get("REMIND_MINUTES", "30"))
     threading.Thread(target=bot.scheduler, args=(times, remind), daemon=True).start()

@@ -16,7 +16,32 @@ Viết bằng Python thuần, không cần cài thư viện. Dữ liệu lưu tr
 Nếu anh đang dùng [ZaloCRM](https://github.com/vuongnguyenbinh/ZaloCRM) để quản lý Zalo cá nhân, bot nhận tin nhắn
 qua **Webhook** của ZaloCRM và gửi báo cáo bằng **API** của ZaloCRM. Anh không cần tạo bot Zalo riêng.
 
-### Cài lên máy chủ ZaloCRM (khoảng 5 phút)
+### Cách dễ nhất: bấm nút trên GitHub (dùng được cả trên điện thoại)
+
+**Làm 1 lần trên máy tính – khai báo máy chủ:** vào kho code trên GitHub → **Settings → Secrets and variables →
+Actions → New repository secret**, tạo các secret sau:
+
+| Tên secret | Giá trị |
+|---|---|
+| `SERVER_HOST` | IP máy chủ ZaloCRM |
+| `SERVER_USER` | tài khoản SSH, thường là `root` |
+| `SERVER_PASSWORD` | mật khẩu SSH (hoặc dùng `SERVER_SSH_KEY` = khóa SSH riêng) |
+| `SERVER_PORT` | chỉ cần nếu cổng SSH khác 22 |
+
+GitHub mã hóa các secret này. Ngay cả khi kho code để công khai, người khác cũng không xem được.
+
+**Mỗi lần dùng (máy tính hoặc app GitHub trên điện thoại):** mở kho code → tab **Actions** → chọn
+**Bot báo đơn Zalo** → **Run workflow**, chọn việc cần làm rồi bấm **Run workflow**:
+- **Cài đặt / cập nhật bot**: chép bot mới nhất lên máy chủ và chạy script cài đặt.
+- **Khởi động lại bot**
+- **Xem tình trạng bot**: bot có đang chạy không, có bao nhiêu lỗi trong 24 giờ qua.
+- **Gửi báo cáo ngay vào nhóm Zalo**: dùng để thử bot.
+
+Dấu ✅ xanh là thành công. Dấu ❌ đỏ thì bấm vào lần chạy đó để xem bước nào lỗi; câu báo lỗi viết bằng tiếng Việt.
+
+Nhật ký chạy không in tên, SĐT hay tin nhắn khách, vì kho code công khai thì ai cũng xem được nhật ký.
+
+### Hoặc cài bằng dòng lệnh (khoảng 5 phút)
 
 Đăng nhập SSH vào máy chủ đang chạy ZaloCRM, rồi làm 3 bước sau.
 

@@ -17,6 +17,13 @@ CONVS = {
 class FakeCRM:
     def __init__(self):
         self.sent = []
+        self.msgs = {}
+
+    def refresh_conversations(self):
+        return list(CONVS.values())
+
+    def messages(self, cid, limit=30):
+        return list(reversed(self.msgs.get(cid, [])))  # API trả mới nhất trước
 
     def conversation(self, cid):
         return CONVS.get(cid)
@@ -88,6 +95,38 @@ class CRMBotTest(unittest.TestCase):
         self.assertIn("CHUYỂN KHOẢN", self.crm.sent[0][2])
         self.bot.handle_event(msg("message.sent", "c-nam", "Dạ em nhận được rồi ạ"))
         self.assertFalse(self.bot.remind_pending(30, datetime.now() + timedelta(minutes=31)))
+
+    def test_polling_picks_up_new_messages_once_and_ignores_history(self):
+        CONVS["c-nam"]["lastMessageAt"] = "2026-11-11T14:00:00.000Z"
+        CONVS["c-group"]["lastMessageAt"] = "2026-11-11T14:00:00.000Z"
+        self.crm.msgs["c-nam"] = [{"id": "m0", "senderType": "contact", "content": "lấy 2 tủ lavabo cũ",
+                                   "contentType": "text", "sentAt": "2026-11-11T14:00:00.000Z"}]
+        self.assertEqual(self.bot.poll_once(), 0)  # lần đầu: không quét lịch sử
+        self.crm.msgs["c-nam"].append({"id": "m1", "senderType": "contact", "content": "Anh ơi lấy em 2 tủ lavabo 80 nhé",
+                                       "contentType": "text", "sentAt": "2026-11-11T14:05:00.000Z"})
+        self.crm.msgs["c-group"] = [{"id": "g1", "senderType": "contact", "content": "/help",
+                                     "contentType": "text", "sentAt": "2026-11-11T14:06:00.000Z"}]
+        CONVS["c-nam"]["lastMessageAt"] = "2026-11-11T14:05:00.000Z"
+        CONVS["c-group"]["lastMessageAt"] = "2026-11-11T14:06:00.000Z"
+        self.assertEqual(self.bot.poll_once(), 2)
+        texts = [t for _, _, t in self.crm.sent]
+        self.assertEqual(len(texts), 2)
+        self.assertTrue(any("KHÁCH ĐẶT HÀNG" in t for t in texts))
+        self.assertTrue(any("BOT ĐƠN HÀNG" in t for t in texts))
+        self.assertEqual(self.bot.poll_once(), 0)  # không xử lý lại
+        # cùng tin đến lại qua webhook -> bỏ qua
+        self.bot.handle_event({"event": "message.received", "data": {"messageId": "m1", "conversationId": "c-nam",
+                               "content": "Anh ơi lấy em 2 tủ lavabo 80 nhé", "contentType": "text"}})
+        self.assertEqual(len(self.crm.sent), 2)
+
+    def test_community_groups_are_not_scanned_by_default(self):
+        CONVS["c-clb"] = {"id": "c-clb", "threadType": "group", "externalThreadId": "g5",
+                          "contact": {"fullName": "CLB Pickleball"}}
+        try:
+            self.bot.handle_event(msg("message.received", "c-clb", "lấy em 2 áo size M ship nhé"))
+            self.assertEqual(self.crm.sent, [])
+        finally:
+            del CONVS["c-clb"]
 
     def test_signature(self):
         body = b'{"event":"x"}'

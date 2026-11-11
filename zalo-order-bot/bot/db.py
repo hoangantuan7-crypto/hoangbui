@@ -48,6 +48,10 @@ CREATE TABLE IF NOT EXISTS leads (
     status TEXT NOT NULL DEFAULT 'open',       -- open | done
     reminded_at TEXT
 );
+CREATE TABLE IF NOT EXISTS seen_messages (
+    id TEXT PRIMARY KEY,
+    seen_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -243,6 +247,18 @@ class Store:
 
     def mark_reminded(self, ids: list[int]):
         self.conn.executemany("UPDATE leads SET reminded_at=? WHERE id=?", [(now_iso(), i) for i in ids])
+        self.conn.commit()
+
+    # ---------- tin đã xử lý (chống xử lý trùng khi vừa webhook vừa hỏi định kỳ) ----------
+    def mark_seen(self, message_id: str) -> bool:
+        """Đánh dấu đã xử lý. Trả về False nếu tin này đã xử lý trước đó."""
+        cur = self.conn.execute("INSERT OR IGNORE INTO seen_messages(id, seen_at) VALUES (?,?)", (message_id, now_iso()))
+        self.conn.commit()
+        return cur.rowcount == 1
+
+    def prune_seen(self, days: int = 3):
+        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        self.conn.execute("DELETE FROM seen_messages WHERE seen_at < ?", (cutoff,))
         self.conn.commit()
 
     # ---------- cài đặt ----------

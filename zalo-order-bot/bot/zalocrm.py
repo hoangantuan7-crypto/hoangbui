@@ -40,11 +40,19 @@ class ZaloCRM:
             return json.loads(resp.read().decode() or "{}")
 
     # ---------- hội thoại ----------
-    def refresh_conversations(self):
+    def refresh_conversations(self) -> list[dict]:
+        """Lấy 100 cuộc trò chuyện mới nhất (mới nhắn gần đây đứng đầu)."""
         data = self._request("GET", "/api/public/conversations", query={"limit": 100})
-        for c in data.get("conversations", []):
+        convs = data.get("conversations", [])
+        for c in convs:
             self._conv_cache[c["id"]] = c
         self._cache_at = time.time()
+        return convs
+
+    def messages(self, conversation_id: str, limit: int = 30) -> list[dict]:
+        """Tin nhắn mới nhất của 1 cuộc trò chuyện (mới nhất đứng đầu)."""
+        path = f"/api/public/conversations/{urllib.parse.quote(conversation_id)}/messages"
+        return self._request("GET", path, query={"limit": limit}).get("messages", [])
 
     def conversation(self, conversation_id: str) -> dict | None:
         if conversation_id not in self._conv_cache or time.time() - self._cache_at > 600:

@@ -8,6 +8,8 @@ Biến môi trường:
   ZALOCRM_ACCOUNT_ID      (tùy chọn) id tài khoản Zalo trong ZaloCRM dùng để gửi tin.
                           Bỏ trống thì bot tự học khi ZaloCRM báo sự kiện zalo.connected.
   REPORT_TIMES            mặc định "08:00,17:00"
+  POLL_SECONDS            bao lâu hỏi ZaloCRM tin mới 1 lần (giây), mặc định 15; 0 = chỉ dùng webhook
+  SCAN_GROUPS             "1" = quét cả tin trong nhóm Zalo (mặc định chỉ chat riêng với khách)
   REMIND_MINUTES          nhắc lại tin khách chưa xử lý sau bao nhiêu phút, mặc định 30
   PORT                    cổng nhận webhook, mặc định 8090
   DB_PATH                 mặc định orders.db
@@ -21,7 +23,7 @@ import threading
 import time
 import urllib.error
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .ai_parser import ai_available, ai_parse_order
@@ -38,12 +40,14 @@ log = logging.getLogger("zalocrm-bot")
 
 
 class CRMBot:
-    def __init__(self, store: Store, crm: ZaloCRM, report_group: str, account_id: str = ""):
+    def __init__(self, store: Store, crm: ZaloCRM, report_group: str, account_id: str = "",
+                 scan_groups: bool = False):
         self.store = store
         self.crm = crm
         self.report_key = norm(report_group)
         if account_id:
             store.set_setting("account_id", account_id)
+        self.scan_groups = scan_groups  # mặc định chỉ quét chat riêng; nhóm cộng đồng dễ báo nhầm
         self.lock = threading.Lock()
         self.recent_out: deque[str] = deque(maxlen=50)  # chống bot tự đọc lại tin của chính nó
 
@@ -75,8 +79,12 @@ class CRMBot:
     def handle_event(self, payload: dict):
         event = payload.get("event", "")
         data = payload.get("data") or {}
-        self.store.set_setting("last_event", f"{datetime.now():%d/%m %H:%M:%S} {event}")
-        log.info("Nhận sự kiện %s (loại tin: %s)", event, data.get("contentType", "-"))
+        source = payload.get("source", "webhook")
+        if source == "webhook":
+            self.store.set_setting("last_event", f"{datetime.now():%d/%m %H:%M:%S} {event}")
+        if data.get("messageId") and not self.store.mark_seen(str(data["messageId"])):
+            return  # đã xử lý (qua webhook hoặc qua hỏi định kỳ)
+        log.info("Nhận %s qua %s (loại tin: %s)", event, source, data.get("contentType", "-"))
         if event == "zalo.connected" and data.get("accountId"):
             if not self.store.get_setting("account_id"):
                 self.store.set_setting("account_id", data["accountId"])
@@ -115,7 +123,7 @@ class CRMBot:
                     reply = f"[chat với {name}]\n{reply}"
                 else:
                     self.store.mark_conv_replied(conv["id"])  # anh đã trả lời khách -> thôi nhắc lại
-            elif not parse_command(text):
+            elif not parse_command(text) and (conv.get("threadType") != "group" or self.scan_groups):
                 reply = self._customer_message(text, conv["id"], name, phone)
             else:
                 reply = None
@@ -154,6 +162,43 @@ class CRMBot:
                              + ["  → /xong K<mã> khi đã xử lý"])
             self.store.mark_reminded([lead["id"] for lead in leads])
         return self.send_report(text)
+
+    # ---------- hỏi ZaloCRM định kỳ (không cần webhook) ----------
+    def poll_once(self) -> int:
+        """Lấy tin nhắn mới qua API công khai và xử lý như webhook. Trả về số tin mới."""
+        convs = self.crm.refresh_conversations()
+        stamps = [c["lastMessageAt"] for c in convs if c.get("lastMessageAt")]
+        cursor = self.store.get_setting("poll_cursor")
+        if not cursor:  # lần đầu: chỉ xử lý tin đến sau thời điểm này, không quét lại lịch sử
+            self.store.set_setting("poll_cursor", max(stamps) if stamps else datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"))
+            log.info("Bắt đầu theo dõi tin nhắn mới từ ZaloCRM")
+            return 0
+        count = 0
+        for conv in convs:
+            if not conv.get("lastMessageAt") or conv["lastMessageAt"] <= cursor:
+                continue
+            for m in reversed(self.crm.messages(conv["id"])):
+                if (m.get("sentAt") or "") <= cursor:
+                    continue
+                count += 1
+                self.handle_event({"source": "hỏi định kỳ",
+                                   "event": "message.sent" if m.get("senderType") == "self" else "message.received",
+                                   "data": {"messageId": m.get("id"), "conversationId": conv["id"],
+                                            "content": m.get("content"), "contentType": m.get("contentType")}})
+        if stamps and max(stamps) > cursor:
+            self.store.set_setting("poll_cursor", max(stamps))
+        if count:
+            self.store.set_setting("last_poll_msg", f"{datetime.now():%d/%m %H:%M:%S}")
+        return count
+
+    def poller(self, seconds: int):
+        while True:
+            try:
+                self.poll_once()
+                self.store.prune_seen()
+            except Exception:  # noqa: BLE001
+                log.exception("Lỗi khi hỏi tin nhắn mới từ ZaloCRM")
+            time.sleep(seconds)
 
     # ---------- báo cáo định kỳ ----------
     def scheduler(self, times: list[str], remind_minutes: int = 30):
@@ -238,8 +283,11 @@ def check(bot: CRMBot, secret: str) -> int:
             norm((c.get("contact") or {}).get("fullName") or "?") for c in groups[:15]) or "(không có)")
     print("4. Webhook Secret:", "có" if secret else "KHÔNG ĐẶT")
     last = bot.store.get_setting("last_event")
-    print("5. Lần cuối nhận tin từ ZaloCRM:", last or "CHƯA NHẬN ĐƯỢC LẦN NÀO")
-    ok &= bool(last) and "SAI" not in last
+    print("5. Webhook từ ZaloCRM:", last or "chưa nhận (không sao – bot tự hỏi tin mới định kỳ)")
+    polled = bot.store.get_setting("last_poll_msg")
+    print("6. Tự hỏi tin mới:", ("đang chạy – lần cuối có tin mới lúc " + polled) if polled
+          else ("đang chạy – chưa có tin mới" if bot.store.get_setting("poll_cursor") else "CHƯA CHẠY"))
+    ok &= bool(bot.store.get_setting("poll_cursor"))
     return 0 if ok else 1
 
 
@@ -250,7 +298,8 @@ def main():
         raise SystemExit("Thiếu ZALOCRM_URL hoặc ZALOCRM_API_KEY")
     store = Store(os.environ.get("DB_PATH", "orders.db"))
     bot = CRMBot(store, ZaloCRM(url, key), os.environ.get("ZALOCRM_REPORT_GROUP", ""),
-                 os.environ.get("ZALOCRM_ACCOUNT_ID", ""))
+                 os.environ.get("ZALOCRM_ACCOUNT_ID", ""),
+                 scan_groups=os.environ.get("SCAN_GROUPS", "0") == "1")
     if "--check" in sys.argv:
         raise SystemExit(check(bot, os.environ.get("ZALOCRM_WEBHOOK_SECRET", "")))
     if "--send-report" in sys.argv:  # gửi báo cáo ngay rồi thoát (nút trên GitHub Actions)
@@ -261,6 +310,9 @@ def main():
     times = [t.strip() for t in os.environ.get("REPORT_TIMES", "08:00,17:00").split(",") if t.strip()]
     remind = int(os.environ.get("REMIND_MINUTES", "30"))
     threading.Thread(target=bot.scheduler, args=(times, remind), daemon=True).start()
+    poll = int(os.environ.get("POLL_SECONDS", "15"))
+    if poll > 0:
+        threading.Thread(target=bot.poller, args=(poll,), daemon=True).start()
     serve(bot, int(os.environ.get("PORT", "8090")), os.environ.get("ZALOCRM_WEBHOOK_SECRET", ""))
 
 

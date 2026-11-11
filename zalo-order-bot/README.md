@@ -16,34 +16,57 @@ Viết bằng Python thuần, không cần cài thư viện. Dữ liệu lưu tr
 Nếu anh đang dùng [ZaloCRM](https://github.com/vuongnguyenbinh/ZaloCRM) để quản lý Zalo cá nhân, bot nhận tin nhắn
 qua **Webhook** của ZaloCRM và gửi báo cáo bằng **API** của ZaloCRM. Anh không cần tạo bot Zalo riêng.
 
-**Bước 1 – Tạo nhóm báo cáo:** lập 1 nhóm Zalo, ví dụ **"Bot đơn hàng"**, gồm tài khoản Zalo đang kết nối ZaloCRM
-và anh/nhân viên. Báo cáo được gửi vào nhóm này, và mọi người gõ lệnh `/thieu`, `/lavabo`... ở đây.
+### Cài lên máy chủ ZaloCRM (khoảng 5 phút)
 
-**Bước 2 – Lấy API key:** trong ZaloCRM vào **API & Webhook**, bấm **Tạo key mới** rồi copy key.
+Đăng nhập SSH vào máy chủ đang chạy ZaloCRM, rồi làm 3 bước sau.
 
-**Bước 3 – Chạy bot cùng ZaloCRM:** chép thư mục `zalo-order-bot` vào thư mục ZaloCRM. Thêm vào file `.env` của ZaloCRM:
-
-```
-ORDER_BOT_API_KEY=key-vừa-tạo
-ORDER_BOT_WEBHOOK_SECRET=mot-chuoi-bi-mat-dai
-ORDER_BOT_REPORT_GROUP=Bot đơn hàng
-```
-
-Sau đó chạy:
+**1. Tải bot về và chép vào thư mục ZaloCRM** (đổi `~/ZaloCRM` nếu anh cài ở chỗ khác):
 
 ```sh
-docker compose -f docker-compose.yml -f zalo-order-bot/docker-compose.zalocrm.yml up -d --build
+cd ~
+git clone https://github.com/hoangantuan7-crypto/hoangbui.git
+cp -r hoangbui/zalo-order-bot ~/ZaloCRM/
 ```
 
-**Bước 4 – Cấu hình Webhook:** trong ZaloCRM vào **API & Webhook**:
-- Webhook URL: `http://order-bot:8090/`
-- Secret: đúng chuỗi `ORDER_BOT_WEBHOOK_SECRET`
+Nếu kho code để chế độ riêng tư, `git clone` sẽ hỏi tên đăng nhập GitHub và mật khẩu. Ở ô mật khẩu, anh dán
+**Personal Access Token** (tạo tại GitHub → Settings → Developer settings → Tokens).
 
-Bấm **Lưu**, rồi bấm **Test Webhook**.
+**2. Chạy script cài đặt:**
 
-**Bước 5 – Cho bot biết tài khoản Zalo dùng để gửi tin:** sau khi cấu hình webhook, chạy `docker compose restart app`
-một lần. Khi ZaloCRM kết nối lại Zalo, nó báo sự kiện `zalo.connected` và bot tự ghi nhớ tài khoản.
-Cũng có thể đặt `ORDER_BOT_ACCOUNT_ID` trong `.env`.
+```sh
+cd ~/ZaloCRM
+bash zalo-order-bot/install-zalocrm.sh
+```
+
+Script hỏi 2 câu: chọn tài khoản Zalo nào để gửi báo cáo (nếu có nhiều) và tên nhóm (mặc định "Bot đơn hàng").
+Sau đó script tự làm các việc sau:
+- lấy hoặc tạo API key của ZaloCRM;
+- cấu hình Webhook có chữ ký bí mật;
+- ghi các biến `ORDER_BOT_*` vào `.env`;
+- build và chạy container `zalo-order-bot`;
+- kiểm tra ZaloCRM đã gọi được bot.
+
+> Script ghi cấu hình thẳng vào CSDL vì trong bản ZaloCRM hiện tại, nút **Lưu** webhook không lưu được
+> (giao diện gửi `webhookUrl` nhưng máy chủ đọc `url`) và nút **Tạo key mới** không hiện key ra.
+> Anh **đừng bấm Lưu webhook** trên giao diện ZaloCRM sau khi cài, vì làm vậy sẽ xóa cấu hình.
+
+**3. Trên điện thoại:**
+1. Tạo nhóm Zalo đúng tên đã chọn, có tài khoản Zalo đang kết nối ZaloCRM và số Zalo của anh hoặc nhân viên.
+2. Dùng **số Zalo của anh** (không phải số đang kết nối ZaloCRM) nhắn vào nhóm `/help`. Bot trả lời là chạy được.
+3. Nhờ ai đó nhắn vào Zalo shop "lấy em 2 tủ lavabo 80 nhé". Nhóm sẽ nhận tin 🔔 báo đơn.
+
+Lệnh hay dùng trên máy chủ:
+
+```sh
+docker logs -f zalo-order-bot                    # xem bot đang làm gì
+cd ~/ZaloCRM && docker compose -f docker-compose.yml -f zalo-order-bot/docker-compose.zalocrm.yml restart order-bot
+```
+
+**Cập nhật bot bản mới:** chạy `cd ~/hoangbui && git pull`, rồi `cp -r zalo-order-bot ~/ZaloCRM/`,
+rồi chạy lại `bash zalo-order-bot/install-zalocrm.sh`. Dữ liệu đơn hàng nằm trong volume Docker nên không bị mất.
+
+Đổi giờ gửi báo cáo hoặc thời gian nhắc lại: sửa `ORDER_BOT_REPORT_TIMES` và `ORDER_BOT_REMIND_MINUTES` trong `.env`
+của ZaloCRM, rồi chạy lại script. Muốn bật AI thì thêm `ANTHROPIC_API_KEY=...` vào `.env`.
 
 Bot hoạt động như sau:
 

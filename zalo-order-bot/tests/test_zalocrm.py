@@ -61,6 +61,34 @@ class CRMBotTest(unittest.TestCase):
         self.bot.handle_event(msg("message.sent", "c-group", echoed))
         self.assertEqual(len(self.crm.sent), 1)
 
+    def test_customer_order_message_alerts_once_and_reminds(self):
+        from datetime import datetime, timedelta
+        self.bot.handle_event(msg("message.received", "c-nam", "Anh ơi lấy em 2 tủ lavabo 80cm nhé"))
+        self.bot.handle_event(msg("message.received", "c-nam", "màu trắng nha anh"))  # gộp, không báo trùng
+        self.bot.handle_event(msg("message.received", "c-nam", "Ok cảm ơn anh"))
+        self.assertEqual(len(self.crm.sent), 1)
+        _, thread, alert = self.crm.sent[0]
+        self.assertEqual(thread, "g99")  # báo vào nhóm, không nhắn cho khách
+        self.assertIn("KHÁCH ĐẶT HÀNG", alert)
+        self.assertIn("Anh Nam (0912345678)", alert)
+        self.assertIn("K1", alert)
+        # quá 30 phút chưa xử lý -> nhắc lại 1 lần
+        later = datetime.now() + timedelta(minutes=31)
+        self.assertTrue(self.bot.remind_pending(30, later))
+        self.assertIn("CHƯA XỬ LÝ", self.crm.sent[-1][2])
+        self.assertFalse(self.bot.remind_pending(30, later))
+        # /xong trong nhóm -> hết trong danh sách chờ
+        self.bot.handle_event(msg("message.received", "c-group", "/xong K1"))
+        self.bot.handle_event(msg("message.received", "c-group", "/choxuly"))
+        self.assertIn("Không có tin khách", self.crm.sent[-1][2])
+
+    def test_payment_message_and_owner_reply_stops_reminder(self):
+        from datetime import datetime, timedelta
+        self.bot.handle_event(msg("message.received", "c-nam", "Em chuyển khoản rồi nhé anh"))
+        self.assertIn("CHUYỂN KHOẢN", self.crm.sent[0][2])
+        self.bot.handle_event(msg("message.sent", "c-nam", "Dạ em nhận được rồi ạ"))
+        self.assertFalse(self.bot.remind_pending(30, datetime.now() + timedelta(minutes=31)))
+
     def test_signature(self):
         body = b'{"event":"x"}'
         sig = hmac.new(b"secret123", body, hashlib.sha256).hexdigest()

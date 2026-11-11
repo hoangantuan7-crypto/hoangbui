@@ -129,10 +129,44 @@ def report_open_orders(store: Store) -> str:
     return "\n".join(lines)
 
 
+KIND_ICON = {"order": "🛒", "payment": "💰"}
+
+
+def _ago(iso: str, now: datetime) -> str:
+    minutes = int((now - datetime.fromisoformat(iso)).total_seconds() // 60)
+    if minutes < 60:
+        return f"{minutes} phút trước"
+    if minutes < 24 * 60:
+        return f"{minutes // 60} giờ trước"
+    return f"{minutes // 1440} ngày trước"
+
+
+def _short(text: str, limit: int = 120) -> str:
+    text = " / ".join(line.strip() for line in text.splitlines() if line.strip())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def lead_line(lead, now: datetime) -> str:
+    who = lead["customer"] + (f" ({lead['phone']})" if lead["phone"] else "")
+    return f"  {KIND_ICON.get(lead['kind'], '•')} K{lead['id']} {who} – {_ago(lead['created_at'], now)}: “{_short(lead['text'])}”"
+
+
+def report_leads(store: Store, now: datetime | None = None) -> str:
+    now = now or datetime.now()
+    leads = store.open_leads()
+    if not leads:
+        return "✅ Không có tin khách đặt hàng nào đang chờ xử lý."
+    lines = [f"🔔 TIN KHÁCH CHỜ XỬ LÝ – {len(leads)}"]
+    lines += [lead_line(lead, now) for lead in leads]
+    lines.append("  → Xử lý xong gõ: /xong K<mã> (vd /xong K5)")
+    return "\n".join(lines)
+
+
 def full_report(store: Store, now: datetime | None = None) -> str:
     now = now or datetime.now()
     return "\n\n".join([
         f"🗓 BÁO CÁO NGÀY {now.strftime('%d/%m/%Y')}",
+        report_leads(store, now),
         report_lavabo(store, now),
         report_shortage(store),
         report_reorder(store, now),

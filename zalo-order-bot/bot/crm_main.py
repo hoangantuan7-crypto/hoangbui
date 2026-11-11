@@ -8,6 +8,7 @@ Biến môi trường:
   ZALOCRM_ACCOUNT_ID      (tùy chọn) id tài khoản Zalo trong ZaloCRM dùng để gửi tin.
                           Bỏ trống thì bot tự học khi ZaloCRM báo sự kiện zalo.connected.
   REPORT_TIMES            mặc định "08:00,17:00"
+  REMIND_MINUTES          nhắc lại tin khách chưa xử lý sau bao nhiêu phút, mặc định 30
   PORT                    cổng nhận webhook, mặc định 8090
   DB_PATH                 mặc định orders.db
   ANTHROPIC_API_KEY       (tùy chọn) tự nhận đơn từ tin nhắn khách viết tự do
@@ -25,7 +26,8 @@ from .ai_parser import ai_available, ai_parse_order
 from .db import Store
 from .handlers import _confirm_order, handle_message
 from .parser import looks_like_order, parse_command
-from .reports import full_report
+from .detect import classify
+from .reports import full_report, lead_line
 from .text import norm
 from .zalo import split_text
 from .zalocrm import ZaloCRM, verify_signature
@@ -96,8 +98,12 @@ class CRMBot:
                 reply = handle_message(self.store, text, conv["id"], use_ai=False,
                                        default_customer=name, phone=phone)
                 if reply:
+                    if reply.startswith("✅ Đã ghi đơn"):
+                        self.store.close_leads(conv_id=conv["id"])  # đã lên đơn -> tin khách coi như xong
                     reply = f"[chat với {name}]\n{reply}"
-            elif conv.get("threadType") == "user" and not parse_command(text):
+                else:
+                    self.store.mark_conv_replied(conv["id"])  # anh đã trả lời khách -> thôi nhắc lại
+            elif not parse_command(text):
                 reply = self._customer_message(text, conv["id"], name, phone)
             else:
                 reply = None
@@ -105,20 +111,47 @@ class CRMBot:
             self.send_report(reply)
 
     def _customer_message(self, text: str, conv_id: str, name: str, phone: str) -> str | None:
-        """Khách tự nhắn đặt hàng: chỉ ghi khi bật AI. Không bao giờ nhắn lại cho khách."""
-        if not (looks_like_order(text) and ai_available()):
+        """Quét tin khách: có ý đặt hàng / báo chuyển khoản -> báo ngay vào nhóm. Không nhắn lại cho khách."""
+        kind = classify(text)
+        if kind is None and not (ai_available() and looks_like_order(text)):
             return None
-        order = ai_parse_order(text, name)
-        if not order:
-            return None
-        oid = self.store.add_order(name or order.customer, order.items, order.phone or phone, order.note, conv_id, text)
-        return "🆕 Khách nhắn đặt hàng (bot tự ghi, anh kiểm tra lại):\n" + _confirm_order(self.store, oid)
+        lead_id, is_new = self.store.add_lead(conv_id, name or "Khách", phone, kind or "order", text)
+        if not is_new:
+            return None  # khách nhắn tiếp cùng đơn: gộp vào tin cũ, không báo trùng
+        who = (name or "Khách") + (f" ({phone})" if phone else "")
+        title = "💰 KHÁCH BÁO CHUYỂN KHOẢN / CỌC" if kind == "payment" else "🔔 KHÁCH ĐẶT HÀNG / HỎI HÀNG"
+        lines = [f"{title} – K{lead_id}", f"👤 {who}", f"💬 “{text}”"]
+        if kind != "payment" and ai_available():
+            order = ai_parse_order(text, name)
+            if order:
+                oid = self.store.add_order(name or order.customer, order.items, order.phone or phone,
+                                           order.note, conv_id, text)
+                lines.append("🤖 Bot đã ghi thử thành đơn, anh kiểm tra lại:\n" + _confirm_order(self.store, oid))
+        lines.append(f"→ Xử lý xong gõ /xong K{lead_id}")
+        return "\n".join(lines)
+
+    def remind_pending(self, minutes: int, now: datetime | None = None) -> bool:
+        """Nhắc các tin khách đã chờ quá `minutes` phút mà chưa ai xử lý."""
+        now = now or datetime.now()
+        with self.lock:
+            leads = self.store.leads_to_remind(minutes, now)
+            if not leads:
+                return False
+            text = "\n".join([f"⏰ CÒN {len(leads)} TIN KHÁCH CHƯA XỬ LÝ (quá {minutes} phút)"]
+                             + [lead_line(lead, now) for lead in leads]
+                             + ["  → /xong K<mã> khi đã xử lý"])
+            self.store.mark_reminded([lead["id"] for lead in leads])
+        return self.send_report(text)
 
     # ---------- báo cáo định kỳ ----------
-    def scheduler(self, times: list[str]):
+    def scheduler(self, times: list[str], remind_minutes: int = 30):
         sent = set()
         while True:
             now = datetime.now()
+            try:
+                self.remind_pending(remind_minutes, now)
+            except Exception:  # noqa: BLE001
+                log.exception("Nhắc tin khách thất bại")
             tag = f"{now.date()} {now:%H:%M}"
             if f"{now:%H:%M}" in times and tag not in sent:
                 sent.add(tag)
@@ -175,7 +208,8 @@ def main():
     bot = CRMBot(store, ZaloCRM(url, key), os.environ.get("ZALOCRM_REPORT_GROUP", ""),
                  os.environ.get("ZALOCRM_ACCOUNT_ID", ""))
     times = [t.strip() for t in os.environ.get("REPORT_TIMES", "08:00,17:00").split(",") if t.strip()]
-    threading.Thread(target=bot.scheduler, args=(times,), daemon=True).start()
+    remind = int(os.environ.get("REMIND_MINUTES", "30"))
+    threading.Thread(target=bot.scheduler, args=(times, remind), daemon=True).start()
     serve(bot, int(os.environ.get("PORT", "8090")), os.environ.get("ZALOCRM_WEBHOOK_SECRET", ""))
 
 

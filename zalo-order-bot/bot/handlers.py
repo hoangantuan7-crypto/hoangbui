@@ -19,6 +19,8 @@ HELP = """🤖 BOT ĐƠN HÀNG – hướng dẫn
 📦 /nhap vòi sen 20 – nhập kho | /ton vòi sen 15 – đặt lại tồn | /ton – xem kho
 📉 /toithieu vòi sen 5 – tồn tối thiểu để bot nhắc nhập
 
+🔔 Tin khách đặt hàng: /choxuly – xem tin chưa xử lý | /xong K5 – đã xử lý
+
 📊 Báo cáo:
   /thieu – khách nào đang thiếu hàng
   /lavabo – cần lên đơn tủ lavabo cho ai
@@ -125,6 +127,15 @@ def _handle_command(store: Store, name: str, args: str, chat_id: str, sender: st
             return f"📦 Tồn {product} = {fmt_qty(qty)}"
         store.add_stock(product, 0, min_qty=qty)
         return f"📉 Tồn tối thiểu {product} = {fmt_qty(qty)}"
+    if name == "choxuly":
+        return reports.report_leads(store)
+    if name == "xong":
+        m = re.match(r"^[kK#]?(\d+)$", args.strip())
+        if not m:
+            raise ValueError("Cú pháp: /xong K<mã>, ví dụ /xong K5")
+        if not store.close_leads(int(m.group(1))):
+            raise ValueError(f"Không có tin K{m.group(1)} đang chờ")
+        return f"👍 Đã xử lý tin K{m.group(1)}"
     if name == "thieu":
         return reports.report_shortage(store)
     if name == "lavabo":

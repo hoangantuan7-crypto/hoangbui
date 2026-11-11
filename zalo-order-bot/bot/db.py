@@ -1,6 +1,6 @@
 """Lưu trữ đơn hàng, tồn kho bằng SQLite."""
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from .text import is_lavabo_cabinet, norm
 
@@ -35,6 +35,18 @@ CREATE TABLE IF NOT EXISTS stock (
     product TEXT NOT NULL,
     qty REAL NOT NULL DEFAULT 0,
     min_qty REAL NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS leads (
+    id INTEGER PRIMARY KEY,
+    conv_id TEXT NOT NULL,
+    customer TEXT NOT NULL,
+    phone TEXT DEFAULT '',
+    kind TEXT NOT NULL DEFAULT 'order',        -- order | payment
+    text TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',       -- open | done
+    reminded_at TEXT
 );
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
@@ -183,6 +195,55 @@ class Store:
 
     def stock_map(self) -> dict[str, sqlite3.Row]:
         return {r["product_key"]: r for r in self.conn.execute("SELECT * FROM stock ORDER BY product")}
+
+    # ---------- tin khách cần xử lý (không để trượt đơn) ----------
+    def add_lead(self, conv_id: str, customer: str, phone: str, kind: str, text: str,
+                 merge_minutes: int = 120, now: datetime | None = None) -> tuple[int, bool]:
+        """Ghi tin khách. Tin cùng khách trong merge_minutes được gộp vào tin đang mở.
+        Trả về (mã, là_tin_mới)."""
+        ts = (now or datetime.now()).replace(microsecond=0)
+        row = self.conn.execute(
+            "SELECT id, text, updated_at FROM leads WHERE conv_id=? AND status='open' AND kind=? ORDER BY id DESC LIMIT 1",
+            (conv_id, kind),
+        ).fetchone()
+        if row and (ts - datetime.fromisoformat(row["updated_at"])).total_seconds() <= merge_minutes * 60:
+            self.conn.execute("UPDATE leads SET text=?, updated_at=? WHERE id=?",
+                              (row["text"] + "\n" + text, ts.isoformat(), row["id"]))
+            self.conn.commit()
+            return row["id"], False
+        cur = self.conn.execute(
+            "INSERT INTO leads(conv_id, customer, phone, kind, text, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+            (conv_id, customer, phone, kind, text, ts.isoformat(), ts.isoformat()),
+        )
+        self.conn.commit()
+        return cur.lastrowid, True
+
+    def close_leads(self, lead_id: int | None = None, conv_id: str | None = None) -> int:
+        if lead_id is not None:
+            cur = self.conn.execute("UPDATE leads SET status='done' WHERE id=? AND status='open'", (lead_id,))
+        else:
+            cur = self.conn.execute("UPDATE leads SET status='done' WHERE conv_id=? AND status='open'", (conv_id,))
+        self.conn.commit()
+        return cur.rowcount
+
+    def open_leads(self):
+        return self.conn.execute("SELECT * FROM leads WHERE status='open' ORDER BY created_at").fetchall()
+
+    def leads_to_remind(self, minutes: int, now: datetime | None = None):
+        cutoff = ((now or datetime.now()) - timedelta(minutes=minutes)).replace(microsecond=0).isoformat()
+        return self.conn.execute(
+            "SELECT * FROM leads WHERE status='open' AND created_at<=? AND reminded_at IS NULL ORDER BY created_at",
+            (cutoff,),
+        ).fetchall()
+
+    def mark_conv_replied(self, conv_id: str):
+        self.conn.execute("UPDATE leads SET reminded_at=? WHERE conv_id=? AND status='open' AND reminded_at IS NULL",
+                          (now_iso(), conv_id))
+        self.conn.commit()
+
+    def mark_reminded(self, ids: list[int]):
+        self.conn.executemany("UPDATE leads SET reminded_at=? WHERE id=?", [(now_iso(), i) for i in ids])
+        self.conn.commit()
 
     # ---------- cài đặt ----------
     def get_setting(self, key: str, default: str = "") -> str:

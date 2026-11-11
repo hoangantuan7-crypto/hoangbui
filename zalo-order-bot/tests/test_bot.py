@@ -75,6 +75,17 @@ class ReportTest(unittest.TestCase):
         self.assertIn("⚠️", handle_message(self.s, "/giao", "c1"))
 
 
+class DetectTest(unittest.TestCase):
+    def test_classify(self):
+        from bot.detect import classify
+        for t in ["Anh ơi lấy em 2 tủ lavabo 80cm nhé", "Tủ chậu 60 giá bao nhiêu ạ",
+                  "Gương này còn hàng không shop", "chốt 3 vòi lavabo"]:
+            self.assertEqual(classify(t), "order", t)
+        self.assertEqual(classify("em chuyển khoản rồi nhé"), "payment")
+        for t in ["Ok em cảm ơn anh", "Hôm qua trời mưa to quá", "Cháu đi học từ sáng", "alo anh ơi"]:
+            self.assertIsNone(classify(t), t)
+
+
 class ZaloTest(unittest.TestCase):
     def test_extract_message(self):
         upd = {"message": {"from": {"id": "u1", "display_name": "Nam", "is_bot": False},

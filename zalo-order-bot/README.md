@@ -1,6 +1,7 @@
 # 🤖 Bot Zalo tổng hợp đơn hàng
 
-Bot chat trên Zalo: đọc tin nhắn đơn hàng trong nhóm/chat, lưu lại và **tự đẩy báo cáo** mỗi ngày:
+Bot chat trên Zalo giúp **không trượt đơn**: quét tin nhắn của khách, thấy khách đặt hàng, hỏi hàng hoặc báo chuyển khoản
+là **báo ngay** vào nhóm Zalo của anh. Tin nào quá 30 phút chưa xử lý thì bot nhắc lại. Bot cũng **tự đẩy báo cáo** mỗi ngày:
 
 - 🛁 **Cần lên đơn tủ lavabo cho ai**: đơn có tủ lavabo nhưng chưa đặt xưởng, và tủ đã đặt nhưng chờ xưởng quá 10 ngày.
 - ⚠️ **Khách nào đang thiếu hàng**: lấy tồn kho chia cho đơn cũ trước, khách nào không đủ hàng thì bot báo thiếu bao nhiêu.
@@ -50,10 +51,16 @@ Bot hoạt động như sau:
 |---|---|
 | Gõ trong nhóm "Bot đơn hàng": `Đơn anh Nam: 2 tủ lavabo 80cm`, `/thieu`, `/giao 3`... | Ghi đơn / trả lời ngay trong nhóm |
 | Anh gõ `Đơn: 1 tủ lavabo 80cm; 2 vòi sen` **ngay trong chat với khách** | Tự lấy tên + SĐT khách từ ZaloCRM, xác nhận vào nhóm báo cáo (**không nhắn gì cho khách**) |
-| Khách tự nhắn "lấy em 2 tủ 60 nhé" | Nếu bật AI (`ANTHROPIC_API_KEY`): tự ghi đơn và báo vào nhóm để anh kiểm tra lại |
+| Khách nhắn "lấy em 2 tủ lavabo 80 nhé", "gương 60 giá bao nhiêu", "còn hàng không" | **Báo ngay** vào nhóm: 🔔 tên, SĐT khách, nội dung, mã `K5`. Khách nhắn tiếp trong 2 giờ thì gộp chung, không báo trùng |
+| Khách nhắn "em chuyển khoản rồi", "đã cọc" | Báo 💰 vào nhóm |
+| Tin khách quá 30 phút chưa xử lý | ⏰ Nhắc lại 1 lần. Anh trả lời khách hoặc gõ `/xong K5` thì thôi nhắc |
+| Gõ `/choxuly` trong nhóm | Danh sách tin khách còn chờ xử lý (cũng có trong báo cáo 8h và 17h) |
+| Bật AI (`ANTHROPIC_API_KEY`) | Bot ghi thử luôn tin khách thành đơn (sản phẩm, số lượng) để anh kiểm tra |
 | 8h và 17h mỗi ngày | Gửi báo cáo tổng hợp vào nhóm |
 
-Khách không thể dùng lệnh của bot, và bot không bao giờ nhắn cho khách. Webhook được kiểm tra chữ ký HMAC
+Bot nhận diện tin đặt hàng bằng từ khóa tiếng Việt (tủ lavabo, gương, vòi, sen, bồn cầu, chốt, lấy, giá bao nhiêu...),
+nên **không cần AI** vẫn báo đơn được. Bot quét cả chat riêng lẫn nhóm khách. Khách không thể dùng lệnh của bot,
+và bot không bao giờ nhắn cho khách. Webhook được kiểm tra chữ ký HMAC
 `X-Webhook-Signature` của ZaloCRM.
 
 > Lưu ý: ZaloCRM đăng nhập Zalo cá nhân bằng thư viện không chính thức (zca-js), nên có rủi ro bị Zalo hạn chế tài khoản.
@@ -104,6 +111,7 @@ Nếu không bật thì bot chỉ ghi các tin bắt đầu bằng **"Đơn"**.
 | `/nhap vòi sen 20` · `/ton vòi sen 15` · `/ton` | Nhập kho, đặt lại số tồn, xem kho |
 | `/toithieu vòi sen 5` | Đặt mức tồn tối thiểu để bot nhắc nhập hàng |
 | `/thieu` · `/lavabo` · `/nhac` · `/donmo` · `/baocao` | Xem các báo cáo |
+| `/choxuly` · `/xong K5` | Xem tin khách chờ xử lý, hoặc báo đã xử lý tin K5 |
 | `/dangky` · `/huydangky` | Nhóm này nhận hoặc thôi nhận báo cáo tự động |
 
 Sản phẩm có chữ "tủ lavabo", "tủ chậu", "tủ bàn đá"... được coi là hàng **đặt xưởng**. Loại hàng này không trừ kho và không tính vào thiếu hàng.

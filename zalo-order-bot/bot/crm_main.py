@@ -35,7 +35,7 @@ import threading
 import time
 import urllib.error
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .ai_parser import ai_available, ai_parse_order
@@ -317,13 +317,108 @@ class CRMBot:
         return bool(state and state["last_shop_at"]
                     and (utc_now() - parse_ts(state["last_shop_at"])).days < 14)
 
+    def muted(self) -> set[str]:
+        return {n for n in self.store.get_setting("muted_names").split("\n") if n}
+
+    def is_muted_name(self, name: str) -> bool:
+        """Chat gia đình/bạn bè đã /boqua: tên người hoặc tên nhóm khớp danh sách."""
+        key = norm(name or "")
+        return bool(key) and any(key == m or key.endswith(f"nhom {m}") for m in self.muted())
+
     def chat_tracked(self, conv: dict) -> bool:
-        """Chat riêng: luôn theo dõi. Nhóm: theo chế độ SCAN_GROUPS."""
+        """Chat riêng: luôn theo dõi (trừ chat đã /boqua). Nhóm: theo chế độ SCAN_GROUPS."""
+        if self.is_muted_name((conv.get("contact") or {}).get("fullName") or ""):
+            return False
         return conv.get("threadType") != "group" or self.group_ok(conv["id"])
 
     def waiting_rows(self):
         return [r for r in self.store.waiting_convs(include_groups=True)
-                if r["thread_type"] != "group" or self.group_ok(r["conv_id"])]
+                if (r["thread_type"] != "group" or self.group_ok(r["conv_id"]))
+                and not self.is_muted_name(r["customer"])]
+
+    def name_list_command(self, setting: str, args: str, title: str, usage: str) -> str:
+        """Quản lý 1 danh sách tên: (trống) xem · them A, B · xoa A. Lưu tên hiển thị + bản không dấu."""
+        saved = [n for n in self.store.get_setting(f"{setting}_display").split("\n") if n]
+        parts = args.split(None, 1)
+        action = norm(parts[0]) if parts else ""
+        names = [n.strip() for n in (parts[1] if len(parts) > 1 else "").split(",") if n.strip()]
+        if action not in ("", "them", "add", "xoa", "bo", "del") or (action and not names):
+            # "/boqua Cả nhà Yêu" (không có chữ "them") cũng hiểu là thêm
+            names = [n.strip() for n in args.split(",") if n.strip()]
+            action = "them" if names and not norm(args).startswith(("xoa ", "bo ")) else action
+            if action != "them":
+                return f"Cú pháp: {usage}"
+        if action in ("them", "add"):
+            saved += [n for n in names if norm(n) not in {norm(s) for s in saved}]
+        elif action in ("xoa", "bo", "del"):
+            drop = {norm(n) for n in names}
+            saved = [s for s in saved if norm(s) not in drop]
+        self.store.set_setting(f"{setting}_display", "\n".join(saved))
+        self.store.set_setting(setting, "\n".join(norm(s) for s in saved))
+        return title + "\n" + ("\n".join(f"  • {n}" for n in saved) if saved else "  (chưa có)") + f"\n{usage}"
+
+    # ---------- Quét lại tin cũ ----------
+    def scan_history(self, days: int = 7) -> str:
+        """Đọc lại tin `days` ngày qua: dựng lại ai đang chờ trả lời, tạo việc cho tin đặt hàng/hỏi hàng
+        chưa ai trả lời. Không báo từng tin – trả về 1 bản tổng hợp."""
+        days = max(1, min(int(days), 30))
+        since = utc_now() - timedelta(days=days)
+        convs = [c for c in self.crm.refresh_conversations()
+                 if c.get("lastMessageAt") and parse_ts(c["lastMessageAt"]) >= since]
+        n_msg, new_leads, waiting_ids = 0, [], []
+        for conv in convs:
+            contact = conv.get("contact") or {}
+            title, phone = contact.get("fullName") or "", contact.get("phone") or ""
+            group = conv.get("threadType") == "group"
+            pending: dict[str, tuple[str, str, datetime]] = {}  # bộ phận -> (người gửi, nội dung, giờ)
+            for m in reversed(self.crm.messages(conv["id"], limit=200)):
+                at = parse_ts(m.get("sentAt"))
+                if at < since or not m.get("id"):
+                    continue
+                self.store.mark_seen(str(m["id"]))
+                n_msg += 1
+                text = (m.get("content") or "").strip() if m.get("contentType") in (None, "", "text") else ""
+                if m.get("senderType") == "self" or self.is_shop_person(m.get("senderName")):
+                    self.store.shop_said(conv["id"], at.isoformat())
+                    pending.clear()  # shop đã trả lời: các tin trước coi như đã được tiếp nhận
+                    continue
+                if not text:
+                    continue
+                who = f"{m.get('senderName') or 'Khách'} (nhóm {title or '?'})" if group else (title or "Khách")
+                self.store.customer_said(conv["id"], who, "" if group else phone, conv.get("threadType") or "user",
+                                         at.isoformat(), text, needs_reply(text))
+                dept = route(text)
+                if dept and dept not in pending:
+                    pending[dept] = (who, text, at)
+            state = self.store.get_conv_state(conv["id"])
+            if not (state and state["waiting"]) or not self.chat_tracked(conv):
+                continue
+            waiting_ids.append(conv["id"])
+            for dept, (who, text, at) in pending.items():
+                lead_id, is_new = self.store.add_lead(conv["id"], who, "" if group else phone, dept, text,
+                                                      now=at.astimezone().replace(tzinfo=None))
+                if is_new:
+                    new_leads.append((lead_id, dept))
+        # Bản tổng hợp thay cho cả 2 lần nhắc (khách cũ đã chờ lâu, nhắc tiếp ngay sẽ trùng);
+        # họ vẫn nằm trong /chuatraloi và mục "Cần anh quyết" của cuộc họp tới khi được trả lời.
+        self.store.set_remind_level(waiting_ids, 2)
+        self.store.mark_reminded([lead_id for lead_id, _ in new_leads])
+        now = utc_now()
+        rows = [r for r in self.waiting_rows() if r["conv_id"] in set(waiting_ids)]
+        lines = [f"🔎 QUÉT LẠI {days} NGÀY: {len(convs)} cuộc trò chuyện, {n_msg} tin"]
+        if rows:
+            lines += [f"\n💬 {len(rows)} KHÁCH CHƯA ĐƯỢC TRẢ LỜI:"] + waiting_lines(rows, now)
+        else:
+            lines.append("\n✅ Không có khách nào bị bỏ quên.")
+        if new_leads:
+            per = {}
+            for _, dept in new_leads:
+                per[dept] = per.get(dept, 0) + 1
+            lines.append(f"\n📋 Đã tạo {len(new_leads)} việc bị sót: "
+                         + ", ".join(f"{dept_icon(d)} {dept_name(d)} {n}" for d, n in per.items()))
+            lines.append("→ Xem chi tiết: /choxuly")
+        lines.append("\nChat gia đình/bạn bè bị lẫn vào? Gõ /boqua Tên người hoặc tên nhóm.")
+        return "\n".join(lines)
 
     def staff_command(self, args: str) -> str:
         """/nhanvien · /nhanvien them Tên A, Tên B · /nhanvien xoa Tên A"""
@@ -395,6 +490,14 @@ class CRMBot:
                 [f"⏰ NHẮC LẦN 2 – {len(second)} KHÁCH CHỜ QUÁ {wait_text(self.second_minutes)}"]
                 + waiting_lines(second, now)))
         return sent
+
+    def _scan_and_reply(self, botname: str, chat_id: str, days: int):
+        try:
+            text = self.scan_history(days)
+        except Exception as e:  # noqa: BLE001
+            log.exception("Quét lại tin cũ thất bại")
+            text = f"⚠️ Quét lại tin cũ bị lỗi: {e}"
+        self._tg_send(f"{botname}:{chat_id}", text)
 
     # ---------- Họp & hỏi đáp ----------
     def _speak(self, botname: str, group_id: str, text: str):
@@ -595,6 +698,14 @@ class CRMBot:
             return self.unanswered_text()
         if cmd and cmd.name == "nhanvien":
             return self.staff_command(cmd.args)
+        if cmd and cmd.name == "boqua":
+            return self.name_list_command(
+                "muted_names", cmd.args, "🔕 KHÔNG QUÉT các chat này (gia đình, bạn bè…):",
+                "Thêm: /boqua Cả nhà Yêu, Mẹ · Bỏ khỏi danh sách: /boqua xoa Mẹ")
+        if cmd and cmd.name == "quetlai":
+            days = int(re.sub(r"\D", "", cmd.args) or 7)
+            threading.Thread(target=self._scan_and_reply, args=(botname, raw_chat, days), daemon=True).start()
+            return f"🔎 Đang quét lại tin {max(1, min(days, 30))} ngày qua, xong em gửi tổng hợp ngay…"
         my_dept = bot_dept or self.store.chat_dept(chat_id)
         if cmd and cmd.name == "choxuly":
             with self.lock:
@@ -773,6 +884,14 @@ def main():
                             if os.environ.get(f"TELEGRAM_TOKEN_{d.upper()}")})
     if "--check" in sys.argv:
         raise SystemExit(check(bot, os.environ.get("ZALOCRM_WEBHOOK_SECRET", "")))
+    if "--scan-history" in sys.argv:  # quét lại tin cũ từ Terminal: --scan-history 7
+        i = sys.argv.index("--scan-history")
+        bot.shop_names = {norm(n) for n in os.environ.get("SHOP_NAMES", "").split(",") if n.strip()}
+        bot.staff_env = {norm(n) for n in os.environ.get("STAFF_NAMES", "").split(",") if n.strip()}
+        text = bot.scan_history(int(sys.argv[i + 1]) if len(sys.argv) > i + 1 else 7)
+        print(text)
+        bot.report_problem(text)
+        return
     if "--send-report" in sys.argv:  # gửi báo cáo ngay rồi thoát (nút trên GitHub Actions)
         if not bot.send_report(full_report(store)):
             raise SystemExit("Chưa gửi được: chưa có chat Telegram nào ghép nối "

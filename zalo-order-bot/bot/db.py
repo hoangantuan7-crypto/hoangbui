@@ -280,6 +280,10 @@ class Store:
         )
         self.conn.commit()
 
+    def is_subscribed(self, chat_id: str) -> bool:
+        row = self.conn.execute("SELECT subscribed FROM chats WHERE chat_id=?", (str(chat_id),)).fetchone()
+        return bool(row and row["subscribed"])
+
     def subscribed_chats(self) -> list[str]:
         return [r["chat_id"] for r in self.conn.execute("SELECT chat_id FROM chats WHERE subscribed=1")]
 

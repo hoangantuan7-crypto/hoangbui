@@ -13,6 +13,9 @@ Biến môi trường:
   REMIND_MINUTES          nhắc lại tin khách chưa xử lý sau bao nhiêu phút, mặc định 30
   PORT                    cổng nhận webhook, mặc định 8090
   DB_PATH                 mặc định orders.db
+  TELEGRAM_BOT_TOKEN      token bot Telegram (lấy từ @BotFather). Có token -> bot chỉ ĐỌC Zalo,
+                          mọi thông báo/lệnh qua Telegram, không gửi tin Zalo nào
+  PAIR_CODE               mã ghép nối: gõ "/batdau <mã>" cho bot Telegram để nhận thông báo
   ANTHROPIC_API_KEY       (tùy chọn) tự nhận đơn từ tin nhắn khách viết tự do
 """
 import json
@@ -34,6 +37,7 @@ from .detect import classify
 from .reports import full_report, lead_line
 from .text import norm
 from .zalo import split_text
+from .telegram import Telegram, pairing_reply
 from .zalocrm import ZaloCRM, verify_signature
 
 log = logging.getLogger("zalocrm-bot")
@@ -41,18 +45,22 @@ log = logging.getLogger("zalocrm-bot")
 
 class CRMBot:
     def __init__(self, store: Store, crm: ZaloCRM, report_group: str, account_id: str = "",
-                 scan_groups: bool = False):
+                 scan_groups: bool = False, telegram: Telegram | None = None, pair_code: str = ""):
         self.store = store
         self.crm = crm
         self.report_key = norm(report_group)
         if account_id:
             store.set_setting("account_id", account_id)
+        self.tg = telegram          # có Telegram: chỉ ĐỌC Zalo, mọi thông báo gửi qua Telegram
+        self.pair_code = pair_code
         self.scan_groups = scan_groups  # mặc định chỉ quét chat riêng; nhóm cộng đồng dễ báo nhầm
         self.lock = threading.Lock()
         self.recent_out: deque[str] = deque(maxlen=50)  # chống bot tự đọc lại tin của chính nó
 
     # ---------- gửi vào nhóm báo cáo ----------
     def report_conv(self) -> dict | None:
+        if self.tg:
+            return None  # chế độ Telegram: không dùng nhóm Zalo
         conv_id = self.store.get_setting("report_conv_id")
         conv = self.crm.conversation(conv_id) if conv_id else None
         if conv is None and self.report_key:
@@ -66,6 +74,17 @@ class CRMBot:
         return conv
 
     def send_report(self, text: str) -> bool:
+        if self.tg:
+            chats = self.store.subscribed_chats()
+            if not chats:
+                log.warning("Chưa có chat Telegram nào ghép nối (gõ /batdau <mã> cho bot Telegram)")
+                return False
+            for chat_id in chats:
+                try:
+                    self.tg.send(chat_id, text)
+                except Exception:  # noqa: BLE001 - 1 chat lỗi không chặn chat khác
+                    log.exception("Gửi Telegram tới 1 chat thất bại")
+            return True
         account_id = self.store.get_setting("account_id")
         conv = self.report_conv()
         if not account_id or not conv:
@@ -200,6 +219,51 @@ class CRMBot:
                 log.exception("Lỗi khi hỏi tin nhắn mới từ ZaloCRM")
             time.sleep(seconds)
 
+    # ---------- Telegram: nhận lệnh ----------
+    def handle_telegram(self, chat_id: str, text: str, sender: str = "") -> str | None:
+        chat_id, text = str(chat_id), (text or "").strip()
+        if not text:
+            return None
+        paired = pairing_reply(text, self.pair_code)
+        if paired:
+            ok, reply = paired
+            if ok:
+                self.store.subscribe(chat_id, sender, True)
+                log.info("Đã ghép nối thêm 1 chat Telegram")
+            elif self.store.is_subscribed(chat_id):
+                return "✅ Chat này đã được kết nối. Gõ /help để xem lệnh."
+            return reply
+        if not self.store.is_subscribed(chat_id):
+            return pairing_reply("/batdau", self.pair_code)[1]
+        cmd = parse_command(text)
+        if cmd and cmd.name == "dangky":
+            return "Chat này đã được kết nối rồi."
+        if cmd and cmd.name == "huydangky":
+            self.store.subscribe(chat_id, sender, False)
+            return "🔕 Đã ngắt kết nối. Gõ /batdau <mã> để kết nối lại."
+        with self.lock:
+            reply = handle_message(self.store, text, f"tg:{chat_id}", sender)
+        return reply or "Gõ /help để xem các lệnh."
+
+    def telegram_loop(self):
+        offset = int(self.store.get_setting("tg_offset", "0") or 0)
+        while True:
+            try:
+                for upd in self.tg.get_updates(offset):
+                    offset = max(offset, int(upd["update_id"]) + 1)
+                    self.store.set_setting("tg_offset", str(offset))
+                    msg = upd.get("message") or {}
+                    chat = msg.get("chat") or {}
+                    sender = (msg.get("from") or {}).get("first_name", "")
+                    if not chat.get("id") or (msg.get("from") or {}).get("is_bot"):
+                        continue
+                    reply = self.handle_telegram(chat["id"], msg.get("text", ""), sender)
+                    if reply:
+                        self.tg.send(str(chat["id"]), reply)
+            except Exception:  # noqa: BLE001
+                log.exception("Lỗi Telegram, thử lại sau 5 giây")
+                time.sleep(5)
+
     # ---------- báo cáo định kỳ ----------
     def scheduler(self, times: list[str], remind_minutes: int = 30):
         sent = set()
@@ -273,10 +337,22 @@ def check(bot: CRMBot, secret: str) -> int:
     except OSError as e:
         print(f"LỖI – không gọi được ZaloCRM ({e})")
         return 1
-    print("2. Tài khoản Zalo gửi tin:", "có" if bot.store.get_setting("account_id") else "CHƯA CÓ")
-    ok &= bool(bot.store.get_setting("account_id"))
-    report = bot.crm.find_group(bot.report_key) if bot.report_key else None
-    print(f"3. Nhóm báo cáo '{bot.report_key}':", "ĐÃ THẤY" if report else "CHƯA THẤY")
+    if bot.tg:
+        print("2. Bot Telegram: ", end="")
+        try:
+            print("OK – @" + bot.tg.get_me().get("username", "?"))
+        except Exception as e:  # noqa: BLE001
+            print(f"LỖI – token sai hoặc không vào được Telegram ({e})")
+            ok = False
+        n = len(bot.store.subscribed_chats())
+        print("3. Chat Telegram đã ghép nối:", n if n else "CHƯA CÓ – nhắn bot: /batdau " + (bot.pair_code or "<mã>"))
+        ok &= n > 0
+        report, groups = True, []
+    else:
+        print("2. Tài khoản Zalo gửi tin:", "có" if bot.store.get_setting("account_id") else "CHƯA CÓ")
+        ok &= bool(bot.store.get_setting("account_id"))
+        report = bot.crm.find_group(bot.report_key) if bot.report_key else None
+        print(f"3. Nhóm báo cáo '{bot.report_key}':", "ĐÃ THẤY" if report else "CHƯA THẤY")
     if not report:
         ok = False
         print("   Các nhóm ZaloCRM đang có:", ", ".join(
@@ -299,17 +375,22 @@ def main():
     store = Store(os.environ.get("DB_PATH", "orders.db"))
     bot = CRMBot(store, ZaloCRM(url, key), os.environ.get("ZALOCRM_REPORT_GROUP", ""),
                  os.environ.get("ZALOCRM_ACCOUNT_ID", ""),
-                 scan_groups=os.environ.get("SCAN_GROUPS", "0") == "1")
+                 scan_groups=os.environ.get("SCAN_GROUPS", "0") == "1",
+                 telegram=Telegram(os.environ["TELEGRAM_BOT_TOKEN"]) if os.environ.get("TELEGRAM_BOT_TOKEN") else None,
+                 pair_code=os.environ.get("PAIR_CODE", ""))
     if "--check" in sys.argv:
         raise SystemExit(check(bot, os.environ.get("ZALOCRM_WEBHOOK_SECRET", "")))
     if "--send-report" in sys.argv:  # gửi báo cáo ngay rồi thoát (nút trên GitHub Actions)
         if not bot.send_report(full_report(store)):
-            raise SystemExit("Chưa gửi được: bot chưa tìm thấy nhóm Zalo báo đơn hoặc tài khoản Zalo. "
-                             "Hãy nhắn 1 tin vào nhóm rồi thử lại.")
+            raise SystemExit("Chưa gửi được: chưa có chat Telegram nào ghép nối "
+                             "(hoặc chưa tìm thấy nhóm Zalo báo đơn). Xem: python -m bot.crm_main --check")
         return
     times = [t.strip() for t in os.environ.get("REPORT_TIMES", "08:00,17:00").split(",") if t.strip()]
     remind = int(os.environ.get("REMIND_MINUTES", "30"))
     threading.Thread(target=bot.scheduler, args=(times, remind), daemon=True).start()
+    if bot.tg:
+        threading.Thread(target=bot.telegram_loop, daemon=True).start()
+        log.info("Chế độ Telegram: chỉ đọc tin Zalo, thông báo gửi qua Telegram")
     poll = int(os.environ.get("POLL_SECONDS", "15"))
     if poll > 0:
         threading.Thread(target=bot.poller, args=(poll,), daemon=True).start()

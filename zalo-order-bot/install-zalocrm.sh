@@ -14,6 +14,7 @@
 #   REPORT_GROUP     tên nhóm Zalo nhận báo đơn (mặc định giữ giá trị cũ hoặc "Bot đơn hàng")
 #   ACCOUNT_NUMBER   số thứ tự tài khoản Zalo (mặc định 1 = tài khoản đang kết nối gần nhất)
 #   REPLACE_WEBHOOK  "c" để cho phép thay webhook đang trỏ chỗ khác
+#   TELEGRAM_TOKEN   token bot Telegram (từ @BotFather) – có token thì bot chỉ ĐỌC Zalo, báo qua Telegram
 set -euo pipefail
 
 INTERACTIVE=0; [ -t 0 ] && INTERACTIVE=1
@@ -95,10 +96,29 @@ fi
 ACCOUNT_ID=$(cut -d'|' -f1 <<<"${ACCOUNTS[$((CHOICE - 1))]}")
 echo "Dùng tài khoản số $CHOICE."
 
-say "Nhóm Zalo nhận báo đơn"
-CUR_GROUP=$(env_get ORDER_BOT_REPORT_GROUP)
-GROUP=$(ask "Tên nhóm Zalo [${CUR_GROUP:-Bot đơn hàng}]: " REPORT_GROUP "${CUR_GROUP:-Bot đơn hàng}")
-echo "Nhóm báo đơn: $GROUP"
+say "Nhận thông báo qua Telegram"
+CUR_TG=$(env_get ORDER_BOT_TELEGRAM_TOKEN)
+if [ -n "$CUR_TG" ]; then HINT="Enter = giữ token cũ"; else HINT="Enter = bỏ qua, báo qua nhóm Zalo"; fi
+TG_TOKEN=$(ask "Dán token bot Telegram ($HINT): " TELEGRAM_TOKEN "$CUR_TG")
+TG_TOKEN=$(printf '%s' "$TG_TOKEN" | tr -d '[:space:]')
+TG_NAME=""
+PAIR_CODE=""
+GROUP=$(env_get ORDER_BOT_REPORT_GROUP)
+if [ -n "$TG_TOKEN" ]; then
+  [[ "$TG_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]{30,}$ ]] \
+    || die "Token Telegram không đúng dạng (dạng đúng: 123456789:AAH...). Copy lại từ @BotFather."
+  ME=$(curl -fsS --max-time 20 "https://api.telegram.org/bot$TG_TOKEN/getMe" 2>/dev/null) \
+    || die "Telegram không nhận token này (sai token, hoặc máy không vào được Telegram)."
+  TG_NAME=$(printf '%s' "$ME" | sed -n 's/.*"username":"\([^"]*\)".*/\1/p')
+  echo "Bot Telegram: @$TG_NAME"
+  PAIR_CODE=$(env_get ORDER_BOT_PAIR_CODE)
+  [ -n "$PAIR_CODE" ] || PAIR_CODE=$(LC_ALL=C tr -dc '0-9' </dev/urandom 2>/dev/null | head -c 6 || true)
+  echo "Bot chỉ ĐỌC tin Zalo, không gửi tin nào qua Zalo."
+else
+  say "Nhóm Zalo nhận báo đơn"
+  GROUP=$(ask "Tên nhóm Zalo [${GROUP:-Bot đơn hàng}]: " REPORT_GROUP "${GROUP:-Bot đơn hàng}")
+  echo "Nhóm báo đơn: $GROUP"
+fi
 
 say "Cấu hình Webhook ZaloCRM -> bot"
 OLD_URL=$(setting webhook_url)
@@ -116,7 +136,9 @@ say "Ghi cấu hình vào .env"
 env_set ORDER_BOT_API_KEY "$API_KEY"
 env_set ORDER_BOT_WEBHOOK_SECRET "$SECRET"
 env_set ORDER_BOT_ACCOUNT_ID "$ACCOUNT_ID"
-env_set ORDER_BOT_REPORT_GROUP "$GROUP"
+env_set ORDER_BOT_REPORT_GROUP "${GROUP:-Bot đơn hàng}"
+env_set ORDER_BOT_TELEGRAM_TOKEN "$TG_TOKEN"
+[ -z "$PAIR_CODE" ] || env_set ORDER_BOT_PAIR_CODE "$PAIR_CODE"
 grep -qE "^ORDER_BOT_REPORT_TIMES=" .env || env_set ORDER_BOT_REPORT_TIMES "08:00,17:00"
 grep -qE "^ORDER_BOT_REMIND_MINUTES=" .env || env_set ORDER_BOT_REMIND_MINUTES "30"
 
@@ -129,6 +151,26 @@ if "${BASE[@]}" exec -T app node -e "fetch('$WEBHOOK_URL').then(r=>process.exit(
   echo "OK – ZaloCRM đã thấy bot."
 else
   die "ZaloCRM chưa gọi được bot. Xem log: docker logs zalo-order-bot"
+fi
+
+if [ -n "$TG_TOKEN" ]; then
+  cat <<EOF
+
+✅ CÀI XONG – báo đơn qua Telegram!
+
+Việc còn lại trên điện thoại:
+  1. Mở Telegram, tìm bot @$TG_NAME, bấm Start (Bắt đầu).
+  2. Gõ:   /batdau $PAIR_CODE
+     -> bot trả lời "Đã kết nối" là xong.
+     (Muốn nhân viên cùng nhận: thêm bot vào nhóm Telegram rồi gõ lệnh trên trong nhóm.)
+  3. Nhờ ai nhắn vào Zalo shop: "lấy em 2 tủ lavabo 80 nhé"
+     -> Telegram nhận tin 🔔 báo đơn trong khoảng 15 giây.
+
+Mã ghép nối: $PAIR_CODE  (giữ kín – ai có mã này sẽ xem được tin khách)
+Xem log bot:      docker logs -f zalo-order-bot
+Kiểm tra bot:     docker exec zalo-order-bot python -m bot.crm_main --check
+EOF
+  exit 0
 fi
 
 cat <<EOF

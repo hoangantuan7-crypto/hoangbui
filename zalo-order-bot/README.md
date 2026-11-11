@@ -13,6 +13,23 @@ Viết bằng Python thuần, không cần cài thư viện. Dữ liệu lưu tr
 
 ## Dùng với ZaloCRM (khuyên dùng)
 
+### Báo đơn qua Telegram (khuyên dùng)
+
+Ở chế độ này bot **chỉ đọc** tin nhắn Zalo qua ZaloCRM và **không gửi bất kỳ tin nào qua Zalo**.
+Thông báo đơn, nhắc việc, báo cáo 8h và 17h, và các lệnh `/choxuly`, `/xong K5`... đều nằm trong Telegram.
+
+1. Trong Telegram, nhắn **@BotFather** → `/newbot`, đặt tên (ví dụ "Việt Hoàng báo đơn") và username kết thúc bằng `bot`.
+   BotFather sẽ gửi **token** dạng `123456789:AAH...`.
+2. Chạy script cài đặt. Đến câu hỏi token thì dán token vào:
+   ```sh
+   cd ~/zcrm && git -C ~/hoangbui pull -q && cp -r ~/hoangbui/zalo-order-bot . && bash zalo-order-bot/install-zalocrm.sh
+   ```
+3. Script in ra **mã ghép nối** gồm 6 số. Mở bot trong Telegram, bấm Start rồi gõ `/batdau <mã>`.
+   Muốn nhân viên cùng nhận thông báo: thêm bot vào một nhóm Telegram, rồi gõ lệnh đó trong nhóm.
+
+Người không có mã ghép nối không xem được gì và không ra lệnh được cho bot. Gõ `/huydangky` để ngắt một chat.
+
+
 Nếu anh đang dùng [ZaloCRM](https://github.com/vuongnguyenbinh/ZaloCRM) để quản lý Zalo cá nhân, bot nhận tin nhắn
 qua **Webhook** của ZaloCRM và gửi báo cáo bằng **API** của ZaloCRM. Anh không cần tạo bot Zalo riêng.
 

@@ -1,0 +1,118 @@
+name: Bot báo đơn Zalo
+
+# Bấm "Run workflow" (máy tính hoặc app GitHub trên điện thoại) để cài / cập nhật / khởi động lại bot
+# trên máy chủ ZaloCRM. Cần khai báo Secrets (Settings → Secrets and variables → Actions):
+#   SERVER_HOST      IP máy chủ ZaloCRM
+#   SERVER_USER      tài khoản SSH (thường là root)
+#   SERVER_PASSWORD  mật khẩu SSH   — hoặc —   SERVER_SSH_KEY  khóa SSH riêng
+#   SERVER_PORT      (tùy chọn) cổng SSH, mặc định 22
+on:
+  workflow_dispatch:
+    inputs:
+      hanh_dong:
+        description: Việc cần làm
+        type: choice
+        default: Cài đặt / cập nhật bot
+        options:
+          - Cài đặt / cập nhật bot
+          - Khởi động lại bot
+          - Xem tình trạng bot
+          - Gửi báo cáo ngay vào nhóm Zalo
+      thu_muc_zalocrm:
+        description: Thư mục ZaloCRM trên máy chủ (tính từ thư mục home)
+        default: ZaloCRM
+      nhom_zalo:
+        description: Tên nhóm Zalo nhận báo đơn (để trống = giữ như cũ / "Bot đơn hàng")
+        default: ''
+      so_tai_khoan:
+        description: Số thứ tự tài khoản Zalo gửi báo cáo (1 = tài khoản đang kết nối)
+        default: '1'
+      thay_webhook:
+        description: Cho phép thay webhook ZaloCRM đang trỏ chỗ khác
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zalo-bot
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      HANH_DONG: ${{ inputs.hanh_dong }}
+      DIR: ${{ inputs.thu_muc_zalocrm }}
+      REPORT_GROUP: ${{ inputs.nhom_zalo }}
+      ACCOUNT_NUMBER: ${{ inputs.so_tai_khoan }}
+      REPLACE_WEBHOOK: ${{ inputs.thay_webhook && 'c' || 'k' }}
+      REPO_PRIVATE: ${{ github.event.repository.private }}
+      SERVER_HOST: ${{ secrets.SERVER_HOST }}
+      SERVER_USER: ${{ secrets.SERVER_USER }}
+      SERVER_PORT: ${{ secrets.SERVER_PORT }}
+      SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+      SSHPASS: ${{ secrets.SERVER_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Kiểm tra bot (chạy test)
+        working-directory: zalo-order-bot
+        run: python3 -m unittest discover -s tests
+
+      - name: Chuẩn bị kết nối SSH
+        run: |
+          [ -n "$SERVER_HOST" ] || { echo "::error::Chưa khai báo secret SERVER_HOST"; exit 1; }
+          [ -n "$SERVER_SSH_KEY$SSHPASS" ] || { echo "::error::Cần secret SERVER_PASSWORD hoặc SERVER_SSH_KEY"; exit 1; }
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          OPTS="-p ${SERVER_PORT:-22} -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 -o ConnectTimeout=20"
+          if [ -n "$SERVER_SSH_KEY" ]; then
+            printf '%s\n' "$SERVER_SSH_KEY" > ~/.ssh/id_bot && chmod 600 ~/.ssh/id_bot
+            echo "SSH=ssh $OPTS -i $HOME/.ssh/id_bot -o BatchMode=yes" >> "$GITHUB_ENV"
+          else
+            sudo apt-get install -y -qq sshpass >/dev/null
+            echo "SSH=sshpass -e ssh $OPTS -o PubkeyAuthentication=no" >> "$GITHUB_ENV"
+          fi
+          echo "TARGET=${SERVER_USER:-root}@${SERVER_HOST}" >> "$GITHUB_ENV"
+          # Thư mục tính từ home; bỏ "~/" nếu có, rồi bọc an toàn cho shell trên máy chủ
+          D="${DIR#\~/}"; echo "QDIR=$(printf %q "${D:-ZaloCRM}")" >> "$GITHUB_ENV"
+
+      - name: Kiểm tra máy chủ
+        run: |
+          $SSH "$TARGET" "cd $QDIR && test -f docker-compose.yml && test -f .env" \
+            || { echo "::error::Không thấy ZaloCRM ở thư mục '$DIR' trên máy chủ (hoặc sai mật khẩu/IP)"; exit 1; }
+          echo "Kết nối máy chủ OK, đã thấy ZaloCRM."
+
+      - name: Cài đặt / cập nhật bot
+        if: inputs.hanh_dong == 'Cài đặt / cập nhật bot'
+        run: |
+          tar czf - --exclude=tests --exclude=__pycache__ zalo-order-bot | $SSH "$TARGET" "cd $QDIR && tar xzf -"
+          $SSH "$TARGET" "cd $QDIR && REPORT_GROUP=$(printf %q "$REPORT_GROUP") ACCOUNT_NUMBER=$(printf %q "$ACCOUNT_NUMBER") \
+            REPLACE_WEBHOOK=$REPLACE_WEBHOOK bash zalo-order-bot/install-zalocrm.sh < /dev/null"
+
+      - name: Khởi động lại bot
+        if: inputs.hanh_dong == 'Khởi động lại bot'
+        run: |
+          $SSH "$TARGET" "cd $QDIR && docker compose -f docker-compose.yml -f zalo-order-bot/docker-compose.zalocrm.yml restart order-bot"
+          echo "Đã khởi động lại bot."
+
+      - name: Xem tình trạng bot
+        if: inputs.hanh_dong == 'Xem tình trạng bot'
+        run: |
+          $SSH "$TARGET" "docker ps -a --filter name=zalo-order-bot --format 'Bot: {{.Status}}'; \
+            echo \"Số lỗi trong 24 giờ qua: \$(docker logs --since 24h zalo-order-bot 2>&1 | grep -cE 'ERROR|Traceback')\""
+          if [ "$REPO_PRIVATE" = "true" ]; then
+            echo "----- 100 dòng log gần nhất -----"
+            $SSH "$TARGET" "docker logs --tail 100 zalo-order-bot 2>&1"
+          else
+            echo "Kho code đang để công khai nên không in log chi tiết (có thể chứa tin nhắn khách)."
+            echo "Đổi kho sang Private (Settings → General → Danger Zone) để xem log ở đây."
+          fi
+
+      - name: Gửi báo cáo ngay vào nhóm Zalo
+        if: inputs.hanh_dong == 'Gửi báo cáo ngay vào nhóm Zalo'
+        run: |
+          $SSH "$TARGET" "docker exec zalo-order-bot python -m bot.crm_main --send-report" \
+            && echo "Đã gửi báo cáo vào nhóm Zalo – mở Zalo để xem."

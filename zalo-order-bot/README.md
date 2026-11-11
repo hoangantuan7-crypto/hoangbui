@@ -94,6 +94,20 @@ Zalo của shop** (`ORDER_BOT_SHOP_NAMES`), nhờ đó bot vẫn nhận ra đó 
   Đặt `SCAN_GROUPS=0` để bỏ qua mọi nhóm, `SCAN_GROUPS=1` để theo dõi tất cả.
 - Nhân viên gõ `Đơn: 1 tủ lavabo 80cm` trong nhóm của khách thì đơn được ghi theo tên nhóm.
 
+### Quét hết tin nhắn: tin cũ, Zalo cá nhân, nick nhân viên, mọi nhóm
+
+- **Tin cũ:** gõ `/quetlai 7` cho Bot Điều phối (tối đa 30 ngày). Bot đọc lại tin trong khoảng đó, tìm **khách chưa
+  được trả lời** và **tin đặt hàng/hỏi hàng bị sót**, tạo việc cho đúng bộ phận, rồi gửi anh **một bản tổng hợp**
+  thay vì từng tin. Từ Terminal: `docker exec zalo-order-bot python -m bot.crm_main --scan-history 7`.
+- **Zalo cá nhân và nick nhân viên:** đăng nhập thêm các nick đó vào ZaloCRM (mục Tài khoản Zalo, quét QR). Bot tự
+  đọc mọi nick có trong ZaloCRM, không cần cấu hình thêm. Nhớ thêm tên các nick đó vào `/nhanvien`.
+- **Mọi nhóm:** đặt `ORDER_BOT_SCAN_GROUPS=1` trong `.env` rồi chạy lại script cài đặt.
+- **Chat gia đình, bạn bè:** gõ `/boqua Cả nhà Yêu, Mẹ` để bot không quét, không báo đơn, không nhắc trả lời các chat
+  đó. Xem danh sách: `/boqua`. Bỏ một tên khỏi danh sách: `/boqua xoa Mẹ`.
+
+Giới hạn: API của ZaloCRM chỉ trả về **100 cuộc trò chuyện gần nhất**, nên `/quetlai` chỉ xem được 100 chat mới
+nhất. Tin mới thì bot vẫn bắt đủ, vì chat vừa có tin luôn nằm đầu danh sách.
+
 ### Họp với các bot và hỏi riêng từng bộ phận
 
 **Họp:** gõ tự do trong phòng điều phối hoặc trong chat riêng với một bot.

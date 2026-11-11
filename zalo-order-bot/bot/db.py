@@ -1,5 +1,6 @@
 """Lưu trữ đơn hàng, tồn kho bằng SQLite."""
 import sqlite3
+import threading
 from datetime import datetime, timedelta
 
 from .text import is_lavabo_cabinet, norm
@@ -68,10 +69,51 @@ def now_iso() -> str:
     return datetime.now().replace(microsecond=0).isoformat()
 
 
+class _Result:
+    """Kết quả truy vấn đã đọc hết trong lúc giữ khóa (an toàn khi nhiều luồng dùng chung)."""
+
+    def __init__(self, cur):
+        self._rows = cur.fetchall() if cur.description else []
+        self.rowcount, self.lastrowid = cur.rowcount, cur.lastrowid
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return list(self._rows)
+
+    def __iter__(self):
+        return iter(self._rows)
+
+
+class _LockedConnection:
+    """Kết nối SQLite dùng chung cho 5 bot + vòng đọc Zalo + lịch báo cáo: mỗi lệnh chạy trọn trong khóa."""
+
+    def __init__(self, conn: sqlite3.Connection):
+        self._conn, self._lock = conn, threading.RLock()
+
+    def execute(self, sql, params=()):
+        with self._lock:
+            return _Result(self._conn.execute(sql, params))
+
+    def executemany(self, sql, seq):
+        with self._lock:
+            return _Result(self._conn.executemany(sql, seq))
+
+    def executescript(self, sql):
+        with self._lock:
+            self._conn.executescript(sql)
+
+    def commit(self):
+        with self._lock:
+            self._conn.commit()
+
+
 class Store:
     def __init__(self, path: str = "orders.db"):
-        self.conn = sqlite3.connect(path, check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row
+        raw = sqlite3.connect(path, check_same_thread=False)
+        raw.row_factory = sqlite3.Row
+        self.conn = _LockedConnection(raw)
         self.conn.executescript(SCHEMA)
         self._migrate()
         self.conn.commit()
@@ -319,6 +361,11 @@ class Store:
         else:
             rows = self.conn.execute("SELECT chat_id FROM chats WHERE subscribed=1")
         return [r["chat_id"] for r in rows]
+
+    def subscribed_rows(self) -> list[tuple[str, str]]:
+        """(chat_id, bộ phận) của mọi chat đang nhận tin."""
+        return [(r["chat_id"], r["dept"]) for r in
+                self.conn.execute("SELECT chat_id, dept FROM chats WHERE subscribed=1 ORDER BY rowid")]
 
     def chats_by_dept(self) -> dict[str, int]:
         rows = self.conn.execute("SELECT dept, COUNT(*) n FROM chats WHERE subscribed=1 GROUP BY dept")

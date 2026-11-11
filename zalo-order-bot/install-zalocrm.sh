@@ -23,7 +23,9 @@ ask() {  # ask "câu hỏi" BIẾN_MÔI_TRƯỜNG giá_trị_mặc_định
   printf '%s' "${answer:-$3}"
 }
 
+# Chạy được cả với bash 3.2 có sẵn trên macOS (không dùng mapfile, mảng kết hợp...).
 COMPOSE=(docker compose -f docker-compose.yml -f zalo-order-bot/docker-compose.zalocrm.yml)
+BASE=(docker compose)   # thao tác với ZaloCRM (db, app) không cần file của bot -> không có cảnh báo biến thiếu
 WEBHOOK_URL="http://order-bot:8090/"
 
 say() { printf '\n\033[1;32m==> %s\033[0m\n' "$*"; }
@@ -46,7 +48,7 @@ env_set() {
 [ -z "$(tail -c1 .env)" ] || echo >>.env   # bảo đảm .env kết thúc bằng dòng mới
 DB_USER=$(env_get DB_USER); DB_USER=${DB_USER:-crmuser}
 DB_NAME=$(env_get DB_NAME); DB_NAME=${DB_NAME:-zalocrm}
-sql() { "${COMPOSE[@]}" exec -T db psql -U "$DB_USER" -d "$DB_NAME" -tA -v ON_ERROR_STOP=1 -c "$1"; }
+sql() { "${BASE[@]}" exec -T db psql -U "$DB_USER" -d "$DB_NAME" -tA -v ON_ERROR_STOP=1 -c "$1"; }
 
 say "Kiểm tra ZaloCRM đang chạy"
 sql "SELECT 1" >/dev/null || die "Không kết nối được CSDL ZaloCRM. Chạy 'docker compose up -d' trước."
@@ -72,8 +74,10 @@ else
 fi
 
 say "Tài khoản Zalo dùng để gửi báo cáo"
-mapfile -t ACCOUNTS < <(sql "SELECT id || '|' || coalesce(display_name,'?') || '|' || coalesce(phone,'') || '|' || status
-                             FROM zalo_accounts WHERE org_id='$ORG_ID' ORDER BY (status='connected') DESC, last_connected_at DESC NULLS LAST")
+ACCOUNT_ROWS=$(sql "SELECT id || '|' || coalesce(display_name,'?') || '|' || coalesce(phone,'') || '|' || status
+                    FROM zalo_accounts WHERE org_id='$ORG_ID' ORDER BY (status='connected') DESC, last_connected_at DESC NULLS LAST")
+ACCOUNTS=()
+while IFS= read -r row; do [ -n "$row" ] && ACCOUNTS+=("$row"); done <<<"$ACCOUNT_ROWS"
 [ ${#ACCOUNTS[@]} -gt 0 ] || die "ZaloCRM chưa có tài khoản Zalo nào. Vào web ZaloCRM thêm và quét QR trước."
 for i in "${!ACCOUNTS[@]}"; do
   IFS='|' read -r _ name phone status <<<"${ACCOUNTS[$i]}"
@@ -121,7 +125,7 @@ say "Build và chạy bot"
 
 say "Kiểm tra ZaloCRM gọi được bot"
 sleep 3
-if "${COMPOSE[@]}" exec -T app node -e "fetch('$WEBHOOK_URL').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
+if "${BASE[@]}" exec -T app node -e "fetch('$WEBHOOK_URL').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
   echo "OK – ZaloCRM đã thấy bot."
 else
   die "ZaloCRM chưa gọi được bot. Xem log: docker logs zalo-order-bot"

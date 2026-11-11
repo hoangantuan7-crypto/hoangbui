@@ -63,6 +63,31 @@ Từ đó:
 Telegram không cho bot đọc tin của bot khác trong nhóm. Vì cả 5 bot chạy chung một chương trình, chúng phối hợp với
 nhau từ bên trong; trong nhóm anh vẫn thấy từng bot lên tiếng.
 
+### Họp với các bot và hỏi riêng từng bộ phận
+
+**Họp:** gõ tự do trong phòng điều phối hoặc trong chat riêng với một bot.
+
+| Gõ | Kết quả |
+|---|---|
+| "họp công ty", "họp toàn bộ", `/hop` | Bot Điều phối mở họp. Bot Sale, Kế toán, Kho, Kỹ thuật lần lượt báo cáo: việc mới, đã xong, đang chờ, quá hạn, thiếu hàng, tủ lavabo chờ xưởng. Cuối cùng Bot Điều phối liệt kê **"Cần anh quyết"**. |
+| "họp bộ phận kho", "họp sale", `/hop kythuat` | Họp riêng một bộ phận: bot đó báo cáo chi tiết từng việc. |
+| "họp" trong chat riêng với Bot Kho | Họp riêng bộ phận Kho. |
+
+Mỗi ngày lúc **18:00** bot tự họp công ty trong phòng điều phối. Đổi giờ bằng `ORDER_BOT_MEETING_TIME` trong `.env`,
+để trống thì tắt họp tự động.
+
+**Hỏi riêng bộ phận** (cần AI, xem bên dưới):
+- Trong phòng: "Kho ơi, tủ của anh Nam đến đâu rồi?", "Kế toán ơi hôm nay ai chuyển khoản?", "@BotKho còn bao nhiêu vòi sen?".
+  Hoặc bấm **Trả lời** (reply) vào tin của một bot rồi hỏi tiếp.
+- Trong chat riêng với một bot: nhắn tự do, bot đó trả lời.
+
+Bot trả lời **dựa trên dữ liệu thật**: việc đang chờ, đơn hàng, tồn kho, tủ lavabo, việc đã xong. Không có dữ liệu
+thì bot nói là chưa có, không tự bịa.
+
+Để bật AI, thêm `ANTHROPIC_API_KEY=...` vào `.env` của ZaloCRM rồi chạy lại script cài đặt. Phí tính theo lượt hỏi;
+ước tính khoảng vài trăm đến 1.000 đồng một câu, tùy lượng dữ liệu. Câu hỏi và dữ liệu của bộ phận đó (tên, SĐT,
+nội dung tin khách) được gửi tới Claude API để trả lời. Chưa bật AI thì bot gửi số liệu hiện có thay cho câu trả lời.
+
 ### Bot điều phối: chia việc cho từng bộ phận
 
 Bot đọc từng tin khách, rồi giao việc cho bộ phận phù hợp:

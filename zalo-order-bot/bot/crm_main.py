@@ -10,6 +10,7 @@ Biến môi trường:
   REPORT_TIMES            mặc định "08:00,17:00"
   POLL_SECONDS            bao lâu hỏi ZaloCRM tin mới 1 lần (giây), mặc định 15; 0 = chỉ dùng webhook
   SCAN_GROUPS             "1" = quét cả tin trong nhóm Zalo (mặc định chỉ chat riêng với khách)
+  MEETING_TIME            giờ họp công ty tự động mỗi ngày, mặc định 18:00 (để trống = tắt)
   REMIND_MINUTES          nhắc lại tin khách chưa xử lý sau bao nhiêu phút, mặc định 30
   PORT                    cổng nhận webhook, mặc định 8090
   DB_PATH                 mặc định orders.db
@@ -38,6 +39,8 @@ from .handlers import _confirm_order, handle_message
 from .parser import looks_like_order, parse_command, parse_order
 from .dept_bots import ALLOWED, BOT_NAMES, DIEUPHOI, FREE_TEXT_ORDERS, dept_help, not_allowed
 from .departments import DEPTS, ROOM, TONG, dept_icon, dept_list, dept_name, parse_dept, route
+from .ai_assistant import ask_bot, parse_address
+from .meeting import COMPANY, build_meeting, flatten, parse_meeting
 from .reports import full_report, lead_line, report_leads
 from .text import norm
 from .zalo import split_text
@@ -66,6 +69,9 @@ class CRMBot:
         self.pair_code = pair_code
         self.usernames: dict[str, str] = {}  # tên @ của từng bot (để gọi tên nhau trong phòng điều phối)
         self.poll_failures = 0
+        self.ask = ask_bot            # hỏi đáp bằng AI (thay được trong test)
+        self.remind_minutes = 30
+        self.meeting_time = "18:00"   # họp công ty tự động mỗi ngày
         self.scan_groups = scan_groups  # mặc định chỉ quét chat riêng; nhóm cộng đồng dễ báo nhầm
         self.lock = threading.Lock()
         self.recent_out: deque[str] = deque(maxlen=50)  # chống bot tự đọc lại tin của chính nó
@@ -258,18 +264,63 @@ class CRMBot:
             except Exception:  # noqa: BLE001
                 log.warning("Không lấy được tên %s (token sai?)", BOT_NAMES[name][1])
 
-    def should_handle(self, botname: str, chat_id: str, text: str) -> bool:
+    def should_handle(self, botname: str, chat_id: str, text: str, reply_to: str | None = None) -> bool:
         """Trong nhóm (chat_id âm) nhiều bot cùng nghe: lệnh có @tên chỉ bot đó trả lời,
         lệnh không có @ chỉ Bot Điều phối trả lời – tránh 5 bot cùng trả lời 1 câu."""
         if not str(chat_id).startswith("-"):
             return True
         text = (text or "").strip()
-        if not text.startswith("/") and not (botname == DIEUPHOI and parse_order(text)):
-            return False  # tin trò chuyện thường trong nhóm: không trả lời (trừ tin ghi đơn "Đơn ...")
+        if not text.startswith("/"):
+            # Trong nhóm chỉ Bot Điều phối đọc câu thường, và chỉ khi là: ghi đơn, gọi họp,
+            # gọi tên 1 bot để hỏi, hoặc trả lời (reply) tin của 1 bot. Còn lại: không trả lời.
+            return botname == DIEUPHOI and bool(parse_order(text) or parse_meeting(text)
+                                                 or parse_address(text, self.usernames) or reply_to)
         m = re.match(r"^/\w+@(\w+)", text)
         if m:
             return m.group(1).lower() == self.usernames.get(botname, "").lower()
         return botname == DIEUPHOI
+
+    # ---------- Họp & hỏi đáp ----------
+    def _speak(self, botname: str, group_id: str, text: str):
+        """1 bot lên tiếng trong nhóm; bot đó chưa có hoặc chưa vào nhóm thì Bot Điều phối nói thay."""
+        bot = self.bots.get(botname)
+        if bot is not None and botname != DIEUPHOI:
+            try:
+                bot.send(group_id, text)
+                return
+            except Exception:  # noqa: BLE001
+                log.warning("%s chưa nhắn được vào nhóm, Bot Điều phối nói thay", BOT_NAMES[botname][1])
+        self.bots[DIEUPHOI].send(group_id, text)
+
+    def run_meeting(self, scope: str, dept: str | None, chat_key: str, auto: bool = False) -> str | None:
+        """Họp trong nhóm: từng bot lần lượt báo cáo bằng chính tên mình.
+        Họp trong chat riêng: bot đang chat gửi 1 tin tổng hợp cả cuộc họp."""
+        with self.lock:
+            msgs = build_meeting(self.store, scope, dept, datetime.now(), self.remind_minutes, auto)
+        botname, _, chat = chat_key.partition(":")
+        if chat.startswith("-") and self.bots:
+            for speaker, text in msgs:
+                self._speak(speaker, chat, text)
+            return None
+        return flatten(msgs)
+
+    def auto_meeting(self, now: datetime):
+        """Họp công ty tự động (mặc định 18:00): trong phòng điều phối nếu có, không thì gửi riêng cho anh."""
+        room = self.room_key()
+        if room:
+            self.run_meeting(COMPANY, None, room, auto=True)
+            return
+        with self.lock:
+            text = flatten(build_meeting(self.store, COMPANY, None, now, self.remind_minutes, auto=True))
+        self.send_report(text)
+
+    def answer(self, bot: str, question: str, raw_chat: str) -> str | None:
+        """Hỏi riêng 1 bộ phận. Trong nhóm: chính bot được hỏi trả lời; chat riêng: trả lời ngay trong chat."""
+        reply = self.ask(bot, question, self.store)
+        if raw_chat.startswith("-") and self.bots:
+            self._speak(bot, raw_chat, reply)
+            return None
+        return reply
 
     # ---------- Telegram: chọn bot + chat nhận tin ----------
     def targets(self, dept: str | None) -> list[str]:
@@ -358,11 +409,13 @@ class CRMBot:
             time.sleep(seconds)
 
     # ---------- Telegram: nhận lệnh ----------
-    def handle_telegram(self, chat_id: str, text: str, sender: str = "", botname: str = DIEUPHOI) -> str | None:
+    def handle_telegram(self, chat_id: str, text: str, sender: str = "", botname: str = DIEUPHOI,
+                        reply_to: str | None = None) -> str | None:
         """Tin nhắn gửi tới 1 bot Telegram. botname: "dieuphoi" hoặc mã bộ phận của bot đó."""
         text = (text or "").strip()
         if not text:
             return None
+        raw_chat = str(chat_id)
         bot_dept = None if botname == DIEUPHOI else botname
         room = self.room_key()
         in_room = bool(bot_dept and room and room.partition(":")[2] == str(chat_id))
@@ -396,6 +449,19 @@ class CRMBot:
         if not self.store.is_subscribed(chat_id) and not in_room:  # bot bộ phận trong phòng điều phối: tự nhận lệnh
             return pairing_reply("/batdau", self.pair_code)[1]
         cmd = parse_command(text)
+        # --- Họp: "họp công ty", "họp bộ phận kho", "/hop", "/hop kho" ---
+        meeting = None if cmd else parse_meeting(text, default_dept=bot_dept)
+        if meeting:
+            return self.run_meeting(meeting[0], meeting[1], chat_id)
+        # --- Hỏi riêng bộ phận: "Kho ơi, …", "@VHKhoBot …", trả lời (reply) tin của 1 bot ---
+        if not cmd and not parse_order(text):
+            addressed = parse_address(text, self.usernames)
+            if not addressed and reply_to:
+                addressed = (reply_to, text)
+            if not addressed and not raw_chat.startswith("-"):
+                addressed = (botname, text)  # chat riêng với bot: câu thường = hỏi chính bot đó
+            if addressed:
+                return self.answer(addressed[0], addressed[1], raw_chat)
         if bot_dept:  # bot bộ phận: chỉ nhận lệnh riêng của bộ phận
             if cmd and cmd.name == "help":
                 return dept_help(bot_dept)
@@ -442,9 +508,11 @@ class CRMBot:
                     sender = (msg.get("from") or {}).get("first_name", "")
                     if not chat.get("id") or (msg.get("from") or {}).get("is_bot"):
                         continue
-                    if not self.should_handle(botname, str(chat["id"]), msg.get("text", "")):
+                    replied = ((msg.get("reply_to_message") or {}).get("from") or {}).get("username", "")
+                    reply_to = next((n for n, u in self.usernames.items() if u and u.lower() == replied.lower()), None)
+                    if not self.should_handle(botname, str(chat["id"]), msg.get("text", ""), reply_to):
                         continue
-                    reply = self.handle_telegram(chat["id"], msg.get("text", ""), sender, botname)
+                    reply = self.handle_telegram(chat["id"], msg.get("text", ""), sender, botname, reply_to)
                     if reply:
                         tg.send(str(chat["id"]), reply)
             except Exception:  # noqa: BLE001
@@ -461,6 +529,12 @@ class CRMBot:
             except Exception:  # noqa: BLE001
                 log.exception("Nhắc tin khách thất bại")
             tag = f"{now.date()} {now:%H:%M}"
+            if self.meeting_time and f"{now:%H:%M}" == self.meeting_time and f"hop {tag}" not in sent:
+                sent.add(f"hop {tag}")
+                try:
+                    self.auto_meeting(now)
+                except Exception:  # noqa: BLE001
+                    log.exception("Họp tự động thất bại")
             if f"{now:%H:%M}" in times and tag not in sent:
                 sent.add(tag)
                 try:
@@ -584,6 +658,8 @@ def main():
         return
     times = [t.strip() for t in os.environ.get("REPORT_TIMES", "08:00,17:00").split(",") if t.strip()]
     remind = int(os.environ.get("REMIND_MINUTES", "30"))
+    bot.remind_minutes = remind
+    bot.meeting_time = os.environ.get("MEETING_TIME", "18:00").strip()  # để trống = tắt họp tự động
     threading.Thread(target=bot.scheduler, args=(times, remind), daemon=True).start()
     bot.load_usernames()
     for name in bot.bots:

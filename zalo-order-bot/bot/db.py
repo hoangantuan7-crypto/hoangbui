@@ -124,6 +124,10 @@ class Store:
             self.conn.execute("ALTER TABLE chats ADD COLUMN dept TEXT NOT NULL DEFAULT 'tong'")
         except sqlite3.OperationalError:
             pass  # đã có cột
+        try:
+            self.conn.execute("ALTER TABLE leads ADD COLUMN closed_at TEXT")  # lúc xử lý xong (để báo cáo họp)
+        except sqlite3.OperationalError:
+            pass
         self.conn.execute("UPDATE leads SET kind='sale' WHERE kind='order'")
         self.conn.execute("UPDATE leads SET kind='ketoan' WHERE kind='payment'")
 
@@ -276,9 +280,11 @@ class Store:
 
     def close_leads(self, lead_id: int | None = None, conv_id: str | None = None) -> int:
         if lead_id is not None:
-            cur = self.conn.execute("UPDATE leads SET status='done' WHERE id=? AND status='open'", (lead_id,))
+            cur = self.conn.execute("UPDATE leads SET status='done', closed_at=? WHERE id=? AND status='open'",
+                                    (now_iso(), lead_id))
         else:
-            cur = self.conn.execute("UPDATE leads SET status='done' WHERE conv_id=? AND status='open'", (conv_id,))
+            cur = self.conn.execute("UPDATE leads SET status='done', closed_at=? WHERE conv_id=? AND status='open'",
+                                    (now_iso(), conv_id))
         self.conn.commit()
         return cur.rowcount
 
@@ -287,6 +293,14 @@ class Store:
             return self.conn.execute("SELECT * FROM leads WHERE status='open' AND kind=? ORDER BY created_at",
                                      (dept,)).fetchall()
         return self.conn.execute("SELECT * FROM leads WHERE status='open' ORDER BY created_at").fetchall()
+
+    def leads_since(self, since: datetime, dept: str | None = None):
+        """Việc nhận mới và việc đã xong kể từ `since` (cho báo cáo họp)."""
+        ts = since.replace(microsecond=0).isoformat()
+        where, args = ("AND kind=?", (dept,)) if dept else ("", ())
+        new = self.conn.execute(f"SELECT * FROM leads WHERE created_at>=? {where} ORDER BY id", (ts, *args)).fetchall()
+        done = self.conn.execute(f"SELECT * FROM leads WHERE closed_at>=? {where} ORDER BY id", (ts, *args)).fetchall()
+        return new, done
 
     def get_lead(self, lead_id: int):
         return self.conn.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()

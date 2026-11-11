@@ -36,6 +36,10 @@ CREATE TABLE IF NOT EXISTS stock (
     qty REAL NOT NULL DEFAULT 0,
     min_qty REAL NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS chats (
     chat_id TEXT PRIMARY KEY,
     name TEXT DEFAULT '',
@@ -179,6 +183,16 @@ class Store:
 
     def stock_map(self) -> dict[str, sqlite3.Row]:
         return {r["product_key"]: r for r in self.conn.execute("SELECT * FROM stock ORDER BY product")}
+
+    # ---------- cài đặt ----------
+    def get_setting(self, key: str, default: str = "") -> str:
+        row = self.conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        return row["value"] if row else default
+
+    def set_setting(self, key: str, value: str):
+        self.conn.execute("INSERT INTO settings(key, value) VALUES (?,?) "
+                          "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+        self.conn.commit()
 
     # ---------- nhóm chat nhận báo cáo ----------
     def subscribe(self, chat_id: str, name: str = "", on: bool = True):

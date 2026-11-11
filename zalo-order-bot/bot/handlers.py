@@ -46,7 +46,8 @@ def _confirm_order(store: Store, oid: int) -> str:
     return "\n".join(lines)
 
 
-def handle_message(store: Store, text: str, chat_id: str = "", sender: str = "", use_ai: bool = True) -> str | None:
+def handle_message(store: Store, text: str, chat_id: str = "", sender: str = "", use_ai: bool = True,
+                   default_customer: str = "", phone: str = "") -> str | None:
     text = (text or "").strip()
     if not text:
         return None
@@ -54,10 +55,11 @@ def handle_message(store: Store, text: str, chat_id: str = "", sender: str = "",
         cmd = parse_command(text)
         if cmd:
             return _handle_command(store, cmd.name, cmd.args, chat_id, sender, text)
-        order = parse_order(text)
+        order = parse_order(text, default_customer)
         if order is None and use_ai and looks_like_order(text) and ai_available():
-            order = ai_parse_order(text, sender)
+            order = ai_parse_order(text, default_customer or sender)
         if order:
+            order.phone = order.phone or phone
             oid = store.add_order(order.customer, order.items, order.phone, order.note, chat_id, text)
             return _confirm_order(store, oid)
     except ValueError as e:

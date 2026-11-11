@@ -55,8 +55,11 @@ def split_items(body: str) -> list[str]:
     return [p for p in re.split(r"[\n;+]|,\s*(?=\d)", body) if p.strip()]
 
 
-def parse_order(message: str) -> ParsedOrder | None:
-    """Trả về ParsedOrder nếu tin nhắn bắt đầu bằng 'Đơn ...', ngược lại None."""
+def parse_order(message: str, default_customer: str = "") -> ParsedOrder | None:
+    """Trả về ParsedOrder nếu tin nhắn bắt đầu bằng 'Đơn ...', ngược lại None.
+
+    default_customer: tên khách dùng khi tin nhắn không ghi tên (vd. gõ "Đơn: 2 tủ lavabo"
+    ngay trong cuộc chat với khách)."""
     if not ORDER_PREFIX_RE.match(message):
         return None
     body = ORDER_PREFIX_RE.sub("", message, count=1)
@@ -67,6 +70,8 @@ def parse_order(message: str) -> ParsedOrder | None:
         customer_part, first_items = head.split(":", 1)
     else:
         customer_part, first_items = head, ""
+    if default_customer and re.match(r"^\s*\d", customer_part):  # "Đơn 2 tủ lavabo" -> chỉ có hàng
+        customer_part, first_items = "", head
     note = ""
     note_m = re.search(r"(?:ghi chú|ghi chu|gc|note)\s*:\s*(.+)$", rest, re.IGNORECASE | re.MULTILINE)
     if note_m:
@@ -75,6 +80,7 @@ def parse_order(message: str) -> ParsedOrder | None:
     phone_m = PHONE_RE.search(customer_part.replace(" ", "").replace(".", ""))
     phone = phone_m.group(0) if phone_m else ""
     customer = PHONE_RE.sub("", re.sub(r"(?<=\d)[ .](?=\d)", "", customer_part)).strip(" -,:")
+    customer = customer or default_customer.strip()
     if not customer:
         return None
     items = [it for it in (parse_item(p) for p in split_items(first_items + "\n" + rest)) if it]

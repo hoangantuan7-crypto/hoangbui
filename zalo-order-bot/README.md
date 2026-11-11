@@ -9,7 +9,59 @@ Bot chat trên Zalo: đọc tin nhắn đơn hàng trong nhóm/chat, lưu lại 
 
 Viết bằng Python thuần, không cần cài thư viện. Dữ liệu lưu trong file SQLite `orders.db`.
 
-## 1. Tạo bot trên Zalo
+
+## Dùng với ZaloCRM (khuyên dùng)
+
+Nếu anh đang dùng [ZaloCRM](https://github.com/vuongnguyenbinh/ZaloCRM) để quản lý Zalo cá nhân, bot nhận tin nhắn
+qua **Webhook** của ZaloCRM và gửi báo cáo bằng **API** của ZaloCRM. Anh không cần tạo bot Zalo riêng.
+
+**Bước 1 – Tạo nhóm báo cáo:** lập 1 nhóm Zalo, ví dụ **"Bot đơn hàng"**, gồm tài khoản Zalo đang kết nối ZaloCRM
+và anh/nhân viên. Báo cáo được gửi vào nhóm này, và mọi người gõ lệnh `/thieu`, `/lavabo`... ở đây.
+
+**Bước 2 – Lấy API key:** trong ZaloCRM vào **API & Webhook**, bấm **Tạo key mới** rồi copy key.
+
+**Bước 3 – Chạy bot cùng ZaloCRM:** chép thư mục `zalo-order-bot` vào thư mục ZaloCRM. Thêm vào file `.env` của ZaloCRM:
+
+```
+ORDER_BOT_API_KEY=key-vừa-tạo
+ORDER_BOT_WEBHOOK_SECRET=mot-chuoi-bi-mat-dai
+ORDER_BOT_REPORT_GROUP=Bot đơn hàng
+```
+
+Sau đó chạy:
+
+```sh
+docker compose -f docker-compose.yml -f zalo-order-bot/docker-compose.zalocrm.yml up -d --build
+```
+
+**Bước 4 – Cấu hình Webhook:** trong ZaloCRM vào **API & Webhook**:
+- Webhook URL: `http://order-bot:8090/`
+- Secret: đúng chuỗi `ORDER_BOT_WEBHOOK_SECRET`
+
+Bấm **Lưu**, rồi bấm **Test Webhook**.
+
+**Bước 5 – Cho bot biết tài khoản Zalo dùng để gửi tin:** sau khi cấu hình webhook, chạy `docker compose restart app`
+một lần. Khi ZaloCRM kết nối lại Zalo, nó báo sự kiện `zalo.connected` và bot tự ghi nhớ tài khoản.
+Cũng có thể đặt `ORDER_BOT_ACCOUNT_ID` trong `.env`.
+
+Bot hoạt động như sau:
+
+| Tin nhắn | Bot làm gì |
+|---|---|
+| Gõ trong nhóm "Bot đơn hàng": `Đơn anh Nam: 2 tủ lavabo 80cm`, `/thieu`, `/giao 3`... | Ghi đơn / trả lời ngay trong nhóm |
+| Anh gõ `Đơn: 1 tủ lavabo 80cm; 2 vòi sen` **ngay trong chat với khách** | Tự lấy tên + SĐT khách từ ZaloCRM, xác nhận vào nhóm báo cáo (**không nhắn gì cho khách**) |
+| Khách tự nhắn "lấy em 2 tủ 60 nhé" | Nếu bật AI (`ANTHROPIC_API_KEY`): tự ghi đơn và báo vào nhóm để anh kiểm tra lại |
+| 8h và 17h mỗi ngày | Gửi báo cáo tổng hợp vào nhóm |
+
+Khách không thể dùng lệnh của bot, và bot không bao giờ nhắn cho khách. Webhook được kiểm tra chữ ký HMAC
+`X-Webhook-Signature` của ZaloCRM.
+
+> Lưu ý: ZaloCRM đăng nhập Zalo cá nhân bằng thư viện không chính thức (zca-js), nên có rủi ro bị Zalo hạn chế tài khoản.
+> Bot chỉ gửi vài tin báo cáo mỗi ngày vào 1 nhóm nên rất ít tin, nhưng anh vẫn nên dùng một số Zalo phụ cho chắc.
+
+## Dùng với Zalo Bot chính thức (không có ZaloCRM)
+
+### 1. Tạo bot trên Zalo
 
 1. Vào **bot.zaloplatforms.com** (Zalo Bot Platform), đăng nhập Zalo → *Tạo bot* → lấy **Bot Token**.
 2. Thêm bot vào nhóm Zalo đặt hàng (hoặc nhắn riêng với bot).
@@ -17,7 +69,7 @@ Viết bằng Python thuần, không cần cài thư viện. Dữ liệu lưu tr
 > Bot chỉ đọc được tin nhắn mà Zalo gửi tới bot. Nếu trong nhóm bot chỉ nhận tin có nhắc tên (@bot),
 > hãy ghi đơn bằng lệnh `/don ...` hoặc chuyển tiếp tin nhắn đơn cho bot.
 
-## 2. Chạy bot
+### 2. Chạy bot
 
 ```sh
 cd zalo-order-bot
@@ -41,7 +93,7 @@ Bot phải chạy liên tục (VPS, máy tính để bàn bật 24/7, Railway/Re
 Khi đó những tin như *"chị Hoa lấy thêm 2 tủ 60 với 3 bộ sen nhé"* cũng được tự ghi thành đơn.
 Nếu không bật thì bot chỉ ghi các tin bắt đầu bằng **"Đơn"**.
 
-## 3. Cách dùng trong Zalo
+## Lệnh trong Zalo
 
 | Gõ | Tác dụng |
 |---|---|

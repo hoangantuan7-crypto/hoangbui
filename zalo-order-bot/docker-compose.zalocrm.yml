@@ -1,0 +1,22 @@
+# Chạy bot cùng ZaloCRM. Đặt thư mục zalo-order-bot vào trong thư mục ZaloCRM rồi chạy:
+#   docker compose -f docker-compose.yml -f zalo-order-bot/docker-compose.zalocrm.yml up -d --build
+services:
+  order-bot:
+    build: ./zalo-order-bot
+    container_name: zalo-order-bot
+    restart: unless-stopped
+    environment:
+      ZALOCRM_URL: http://app:3000
+      ZALOCRM_API_KEY: ${ORDER_BOT_API_KEY}
+      ZALOCRM_WEBHOOK_SECRET: ${ORDER_BOT_WEBHOOK_SECRET}
+      ZALOCRM_REPORT_GROUP: ${ORDER_BOT_REPORT_GROUP:-Bot đơn hàng}
+      ZALOCRM_ACCOUNT_ID: ${ORDER_BOT_ACCOUNT_ID:-}
+      REPORT_TIMES: ${ORDER_BOT_REPORT_TIMES:-08:00,17:00}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - order_bot_data:/data
+    depends_on:
+      - app
+
+volumes:
+  order_bot_data:

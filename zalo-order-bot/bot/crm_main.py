@@ -19,6 +19,7 @@ import os
 import sys
 import threading
 import time
+import urllib.error
 from collections import deque
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -54,6 +55,10 @@ class CRMBot:
             conv = self.crm.find_group(self.report_key)
             if conv:
                 self.store.set_setting("report_conv_id", conv["id"])
+                log.info("Đã tìm thấy nhóm báo cáo")
+            else:
+                log.warning("Chưa thấy nhóm Zalo tên '%s' trong ZaloCRM (nhóm phải có ít nhất 1 tin nhắn)",
+                            self.report_key)
         return conv
 
     def send_report(self, text: str) -> bool:
@@ -70,12 +75,17 @@ class CRMBot:
     def handle_event(self, payload: dict):
         event = payload.get("event", "")
         data = payload.get("data") or {}
+        self.store.set_setting("last_event", f"{datetime.now():%d/%m %H:%M:%S} {event}")
+        log.info("Nhận sự kiện %s (loại tin: %s)", event, data.get("contentType", "-"))
         if event == "zalo.connected" and data.get("accountId"):
             if not self.store.get_setting("account_id"):
                 self.store.set_setting("account_id", data["accountId"])
                 log.info("Đã nhận tài khoản Zalo %s", data["accountId"])
             return
-        if event not in ("message.received", "message.sent") or data.get("contentType", "text") != "text":
+        if event not in ("message.received", "message.sent"):
+            return
+        if data.get("contentType") not in (None, "", "text"):
+            log.info("Bỏ qua: không phải tin chữ")
             return
         text = (data.get("content") or "").strip()
         if not text:
@@ -85,6 +95,7 @@ class CRMBot:
             return
         conv = self.crm.conversation(data.get("conversationId", ""))
         if not conv:
+            log.warning("Bỏ qua: API ZaloCRM không trả về cuộc trò chuyện %s", data.get("conversationId"))
             return
         report = self.report_conv()
         contact = conv.get("contact") or {}
@@ -170,6 +181,8 @@ def serve(bot: CRMBot, port: int, secret: str):
         def do_POST(self):
             body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
             if not verify_signature(secret, body, self.headers.get("X-Webhook-Signature", "")):
+                log.warning("Từ chối webhook: sai chữ ký (Webhook Secret trong ZaloCRM khác ORDER_BOT_WEBHOOK_SECRET)")
+                bot.store.set_setting("last_event", f"{datetime.now():%d/%m %H:%M:%S} SAI CHỮ KÝ")
                 self.send_response(401)
                 self.end_headers()
                 return
@@ -200,6 +213,36 @@ def serve(bot: CRMBot, port: int, secret: str):
     ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
 
 
+def check(bot: CRMBot, secret: str) -> int:
+    """In tình trạng kết nối để tìm lỗi (python -m bot.crm_main --check)."""
+    ok = True
+    print("1. API key ZaloCRM: ", end="")
+    try:
+        bot.crm.refresh_conversations()
+        convs = list(bot.crm._conv_cache.values())
+        groups = [c for c in convs if c.get("threadType") == "group"]
+        print(f"OK – đọc được {len(convs)} cuộc trò chuyện, {len(groups)} nhóm")
+    except urllib.error.HTTPError as e:
+        print(f"LỖI {e.code}" + (" – API key sai" if e.code == 401 else ""))
+        return 1
+    except OSError as e:
+        print(f"LỖI – không gọi được ZaloCRM ({e})")
+        return 1
+    print("2. Tài khoản Zalo gửi tin:", "có" if bot.store.get_setting("account_id") else "CHƯA CÓ")
+    ok &= bool(bot.store.get_setting("account_id"))
+    report = bot.crm.find_group(bot.report_key) if bot.report_key else None
+    print(f"3. Nhóm báo cáo '{bot.report_key}':", "ĐÃ THẤY" if report else "CHƯA THẤY")
+    if not report:
+        ok = False
+        print("   Các nhóm ZaloCRM đang có:", ", ".join(
+            norm((c.get("contact") or {}).get("fullName") or "?") for c in groups[:15]) or "(không có)")
+    print("4. Webhook Secret:", "có" if secret else "KHÔNG ĐẶT")
+    last = bot.store.get_setting("last_event")
+    print("5. Lần cuối nhận tin từ ZaloCRM:", last or "CHƯA NHẬN ĐƯỢC LẦN NÀO")
+    ok &= bool(last) and "SAI" not in last
+    return 0 if ok else 1
+
+
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     url, key = os.environ.get("ZALOCRM_URL"), os.environ.get("ZALOCRM_API_KEY")
@@ -208,6 +251,8 @@ def main():
     store = Store(os.environ.get("DB_PATH", "orders.db"))
     bot = CRMBot(store, ZaloCRM(url, key), os.environ.get("ZALOCRM_REPORT_GROUP", ""),
                  os.environ.get("ZALOCRM_ACCOUNT_ID", ""))
+    if "--check" in sys.argv:
+        raise SystemExit(check(bot, os.environ.get("ZALOCRM_WEBHOOK_SECRET", "")))
     if "--send-report" in sys.argv:  # gửi báo cáo ngay rồi thoát (nút trên GitHub Actions)
         if not bot.send_report(full_report(store)):
             raise SystemExit("Chưa gửi được: bot chưa tìm thấy nhóm Zalo báo đơn hoặc tài khoản Zalo. "

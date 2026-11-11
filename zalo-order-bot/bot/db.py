@@ -73,7 +73,17 @@ class Store:
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self):
+        """Nâng cấp CSDL cũ: thêm bộ phận cho chat, đổi loại tin cũ sang bộ phận."""
+        try:
+            self.conn.execute("ALTER TABLE chats ADD COLUMN dept TEXT NOT NULL DEFAULT 'tong'")
+        except sqlite3.OperationalError:
+            pass  # đã có cột
+        self.conn.execute("UPDATE leads SET kind='sale' WHERE kind='order'")
+        self.conn.execute("UPDATE leads SET kind='ketoan' WHERE kind='payment'")
 
     # ---------- khách hàng ----------
     def get_or_create_customer(self, name: str, phone: str = "") -> int:
@@ -230,8 +240,20 @@ class Store:
         self.conn.commit()
         return cur.rowcount
 
-    def open_leads(self):
+    def open_leads(self, dept: str | None = None):
+        if dept:
+            return self.conn.execute("SELECT * FROM leads WHERE status='open' AND kind=? ORDER BY created_at",
+                                     (dept,)).fetchall()
         return self.conn.execute("SELECT * FROM leads WHERE status='open' ORDER BY created_at").fetchall()
+
+    def get_lead(self, lead_id: int):
+        return self.conn.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
+
+    def set_lead_dept(self, lead_id: int, dept: str) -> bool:
+        cur = self.conn.execute("UPDATE leads SET kind=?, reminded_at=NULL WHERE id=? AND status='open'",
+                                (dept, lead_id))
+        self.conn.commit()
+        return cur.rowcount == 1
 
     def leads_to_remind(self, minutes: int, now: datetime | None = None):
         cutoff = ((now or datetime.now()) - timedelta(minutes=minutes)).replace(microsecond=0).isoformat()
@@ -272,20 +294,35 @@ class Store:
         self.conn.commit()
 
     # ---------- nhóm chat nhận báo cáo ----------
-    def subscribe(self, chat_id: str, name: str = "", on: bool = True):
+    def subscribe(self, chat_id: str, name: str = "", on: bool = True, dept: str | None = None):
+        """Bật/tắt nhận tin cho 1 chat. dept: bộ phận của chat ('tong' = nhận tất cả)."""
         self.conn.execute(
-            "INSERT INTO chats(chat_id, name, subscribed) VALUES (?,?,?) "
-            "ON CONFLICT(chat_id) DO UPDATE SET subscribed=excluded.subscribed",
-            (str(chat_id), name, int(on)),
+            "INSERT INTO chats(chat_id, name, subscribed, dept) VALUES (?,?,?,?) "
+            "ON CONFLICT(chat_id) DO UPDATE SET subscribed=excluded.subscribed, "
+            "dept=COALESCE(?, chats.dept)",
+            (str(chat_id), name, int(on), dept or "tong", dept),
         )
         self.conn.commit()
+
+    def chat_dept(self, chat_id: str) -> str:
+        row = self.conn.execute("SELECT dept FROM chats WHERE chat_id=?", (str(chat_id),)).fetchone()
+        return row["dept"] if row else "tong"
 
     def is_subscribed(self, chat_id: str) -> bool:
         row = self.conn.execute("SELECT subscribed FROM chats WHERE chat_id=?", (str(chat_id),)).fetchone()
         return bool(row and row["subscribed"])
 
-    def subscribed_chats(self) -> list[str]:
-        return [r["chat_id"] for r in self.conn.execute("SELECT chat_id FROM chats WHERE subscribed=1")]
+    def subscribed_chats(self, dept: str | None = None) -> list[str]:
+        """Các chat đang nhận tin. Có dept: chat của bộ phận đó + chat tổng."""
+        if dept:
+            rows = self.conn.execute("SELECT chat_id FROM chats WHERE subscribed=1 AND dept IN (?, 'tong')", (dept,))
+        else:
+            rows = self.conn.execute("SELECT chat_id FROM chats WHERE subscribed=1")
+        return [r["chat_id"] for r in rows]
+
+    def chats_by_dept(self) -> dict[str, int]:
+        rows = self.conn.execute("SELECT dept, COUNT(*) n FROM chats WHERE subscribed=1 GROUP BY dept")
+        return {r["dept"]: r["n"] for r in rows}
 
 
 def fmt_qty(q: float) -> str:

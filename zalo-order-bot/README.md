@@ -29,6 +29,25 @@ Thông báo đơn, nhắc việc, báo cáo 8h và 17h, và các lệnh `/choxul
 
 Người không có mã ghép nối không xem được gì và không ra lệnh được cho bot. Gõ `/huydangky` để ngắt một chat.
 
+### Bot điều phối: chia việc cho từng bộ phận
+
+Bot đọc từng tin khách, rồi giao việc cho bộ phận phù hợp:
+
+| Bộ phận | Ví dụ tin khách |
+|---|---|
+| 🛒 `sale` | "lấy em 2 tủ lavabo 80", "gương 60 giá bao nhiêu", "còn hàng không" |
+| 💰 `ketoan` | "em chuyển khoản rồi", "xuất hóa đơn VAT giúp em", "công nợ" |
+| 📦 `kho` | "bao giờ giao hàng", "hàng bị vỡ", "đổi hàng" |
+| 🔧 `kythuat` | "lắp đặt", "bảo hành", "bị rỉ nước", "vòi bị hỏng" |
+
+Tạo một nhóm Telegram cho mỗi bộ phận, thêm bot vào nhóm, rồi gõ trong nhóm `/batdau <mã> kho` (đổi `kho` thành
+`sale`, `ketoan` hoặc `kythuat`). Mỗi nhóm chỉ nhận tin báo, tin nhắc việc trễ và `/choxuly` của bộ phận mình.
+Chat ghép nối không kèm bộ phận (`/batdau <mã>`) là **chat tổng**: nhận mọi việc và báo cáo 8h/17h.
+
+- Bot giao nhầm bộ phận: gõ `/chuyen K5 kythuat` để chuyển việc, bộ phận mới được báo ngay.
+- Xem chat đang thuộc bộ phận nào: gõ `/bophan`.
+- Thêm bộ phận mới, ví dụ marketing: thêm một dòng vào `bot/departments.py` (tên bộ phận và từ khóa).
+
 
 Nếu anh đang dùng [ZaloCRM](https://github.com/vuongnguyenbinh/ZaloCRM) để quản lý Zalo cá nhân, bot nhận tin nhắn
 qua **Webhook** của ZaloCRM và gửi báo cáo bằng **API** của ZaloCRM. Anh không cần tạo bot Zalo riêng.

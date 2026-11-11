@@ -21,6 +21,7 @@ Biến môi trường:
 import json
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -33,8 +34,8 @@ from .ai_parser import ai_available, ai_parse_order
 from .db import Store
 from .handlers import _confirm_order, handle_message
 from .parser import looks_like_order, parse_command
-from .detect import classify
-from .reports import full_report, lead_line
+from .departments import DEPTS, TONG, dept_icon, dept_list, dept_name, parse_dept, route
+from .reports import full_report, lead_line, report_leads
 from .text import norm
 from .zalo import split_text
 from .telegram import Telegram, pairing_reply
@@ -73,9 +74,11 @@ class CRMBot:
                             self.report_key)
         return conv
 
-    def send_report(self, text: str) -> bool:
+    def send_report(self, text: str, dept: str | None = None) -> bool:
+        """Gửi tin. Chế độ Telegram: dept=None -> chat tổng (không có thì mọi chat);
+        dept=<bộ phận> -> nhóm của bộ phận đó + chat tổng."""
         if self.tg:
-            chats = self.store.subscribed_chats()
+            chats = self.store.subscribed_chats(dept or TONG) or (self.store.subscribed_chats() if not dept else [])
             if not chats:
                 log.warning("Chưa có chat Telegram nào ghép nối (gõ /batdau <mã> cho bot Telegram)")
                 return False
@@ -128,6 +131,7 @@ class CRMBot:
         contact = conv.get("contact") or {}
         name, phone = contact.get("fullName") or "", contact.get("phone") or ""
 
+        target = None  # bộ phận nhận tin (None = chat tổng)
         with self.lock:
             if report and conv["id"] == report["id"]:
                 # Nhóm báo cáo: nhận lệnh và ghi đơn như bot thường
@@ -143,31 +147,34 @@ class CRMBot:
                 else:
                     self.store.mark_conv_replied(conv["id"])  # anh đã trả lời khách -> thôi nhắc lại
             elif not parse_command(text) and (conv.get("threadType") != "group" or self.scan_groups):
-                reply = self._customer_message(text, conv["id"], name, phone)
+                reply, target = self._customer_message(text, conv["id"], name, phone)
             else:
                 reply = None
         if reply:
-            self.send_report(reply)
+            self.send_report(reply, target)
 
-    def _customer_message(self, text: str, conv_id: str, name: str, phone: str) -> str | None:
-        """Quét tin khách: có ý đặt hàng / báo chuyển khoản -> báo ngay vào nhóm. Không nhắn lại cho khách."""
-        kind = classify(text)
-        if kind is None and not (ai_available() and looks_like_order(text)):
-            return None
-        lead_id, is_new = self.store.add_lead(conv_id, name or "Khách", phone, kind or "order", text)
+    def _customer_message(self, text: str, conv_id: str, name: str, phone: str) -> tuple[str | None, str | None]:
+        """Bot điều phối: đọc tin khách, chọn bộ phận, báo vào nhóm bộ phận đó. Không nhắn lại cho khách.
+        Trả về (nội dung báo, bộ phận)."""
+        dept = route(text)
+        if dept is None and ai_available() and looks_like_order(text):
+            dept = "sale"
+        if dept is None:
+            return None, None
+        lead_id, is_new = self.store.add_lead(conv_id, name or "Khách", phone, dept, text)
         if not is_new:
-            return None  # khách nhắn tiếp cùng đơn: gộp vào tin cũ, không báo trùng
+            return None, None  # khách nhắn tiếp cùng việc: gộp vào tin cũ, không báo trùng
         who = (name or "Khách") + (f" ({phone})" if phone else "")
-        title = "💰 KHÁCH BÁO CHUYỂN KHOẢN / CỌC" if kind == "payment" else "🔔 KHÁCH ĐẶT HÀNG / HỎI HÀNG"
-        lines = [f"{title} – K{lead_id}", f"👤 {who}", f"💬 “{text}”"]
-        if kind != "payment" and ai_available():
+        icon, dname, title = DEPTS[dept]
+        lines = [f"{icon} {dname.upper()} – {title} – K{lead_id}", f"👤 {who}", f"💬 “{text}”"]
+        if dept == "sale" and ai_available():
             order = ai_parse_order(text, name)
             if order:
                 oid = self.store.add_order(name or order.customer, order.items, order.phone or phone,
                                            order.note, conv_id, text)
                 lines.append("🤖 Bot đã ghi thử thành đơn, anh kiểm tra lại:\n" + _confirm_order(self.store, oid))
-        lines.append(f"→ Xử lý xong gõ /xong K{lead_id}")
-        return "\n".join(lines)
+        lines.append(f"→ Xong gõ /xong K{lead_id} · Sai bộ phận: /chuyen K{lead_id} <bộ phận>")
+        return "\n".join(lines), dept
 
     def remind_pending(self, minutes: int, now: datetime | None = None) -> bool:
         """Nhắc các tin khách đã chờ quá `minutes` phút mà chưa ai xử lý."""
@@ -176,11 +183,34 @@ class CRMBot:
             leads = self.store.leads_to_remind(minutes, now)
             if not leads:
                 return False
-            text = "\n".join([f"⏰ CÒN {len(leads)} TIN KHÁCH CHƯA XỬ LÝ (quá {minutes} phút)"]
-                             + [lead_line(lead, now) for lead in leads]
-                             + ["  → /xong K<mã> khi đã xử lý"])
             self.store.mark_reminded([lead["id"] for lead in leads])
-        return self.send_report(text)
+        sent = False
+        for dept in dict.fromkeys(lead["kind"] for lead in leads):  # giữ thứ tự, mỗi bộ phận 1 tin
+            group = [lead for lead in leads if lead["kind"] == dept]
+            text = "\n".join([f"⏰ {dept_icon(dept)} {dept_name(dept).upper()}: CÒN {len(group)} TIN KHÁCH "
+                              f"CHƯA XỬ LÝ (quá {minutes} phút)"]
+                             + [lead_line(lead, now) for lead in group]
+                             + ["  → /xong K<mã> khi đã xử lý"])
+            sent |= self.send_report(text, dept)
+        return sent
+
+    def dept_only_chats(self, dept: str) -> list[str]:
+        tong = set(self.store.subscribed_chats(TONG))
+        return [c for c in self.store.subscribed_chats(dept) if c not in tong]
+
+    def send_daily(self, now: datetime):
+        """Báo cáo giờ cố định: chat tổng nhận báo cáo đầy đủ, nhóm bộ phận nhận việc tồn của mình."""
+        with self.lock:
+            text = full_report(self.store, now)
+            per_dept = {d: report_leads(self.store, now, d) for d in DEPTS}
+        self.send_report(text)
+        if self.tg:
+            for dept, body in per_dept.items():
+                for chat_id in self.dept_only_chats(dept):
+                    try:
+                        self.tg.send(chat_id, f"🗓 {now:%d/%m} – việc của bộ phận\n\n{body}")
+                    except Exception:  # noqa: BLE001
+                        log.exception("Gửi báo cáo bộ phận thất bại")
 
     # ---------- hỏi ZaloCRM định kỳ (không cần webhook) ----------
     def poll_once(self) -> int:
@@ -228,8 +258,15 @@ class CRMBot:
         if paired:
             ok, reply = paired
             if ok:
-                self.store.subscribe(chat_id, sender, True)
-                log.info("Đã ghép nối thêm 1 chat Telegram")
+                words = text.split()
+                dept = parse_dept(words[2]) if len(words) > 2 else TONG
+                if dept is None:
+                    return f"❓ Không rõ bộ phận '{words[2]}'. Chọn: {dept_list()} – hoặc bỏ trống để nhận tất cả."
+                self.store.subscribe(chat_id, sender, True, dept)
+                log.info("Đã ghép nối thêm 1 chat Telegram (%s)", dept)
+                return reply + "\n" + (f"📌 Chat này là nhóm {dept_icon(dept)} {dept_name(dept)}: chỉ nhận việc của "
+                                       "bộ phận này." if dept != TONG else
+                                       "📌 Chat TỔNG: nhận mọi tin và báo cáo tổng hợp.")
             elif self.store.is_subscribed(chat_id):
                 return "✅ Chat này đã được kết nối. Gõ /help để xem lệnh."
             return reply
@@ -241,8 +278,19 @@ class CRMBot:
         if cmd and cmd.name == "huydangky":
             self.store.subscribe(chat_id, sender, False)
             return "🔕 Đã ngắt kết nối. Gõ /batdau <mã> để kết nối lại."
+        my_dept = self.store.chat_dept(chat_id)
+        if cmd and cmd.name == "choxuly":
+            with self.lock:
+                return report_leads(self.store, dept=my_dept)
+        if cmd and cmd.name == "bophan":
+            return (f"📌 Chat này: {dept_icon(my_dept)} {dept_name(my_dept)}.\n"
+                    f"Đổi bộ phận: /batdau <mã> <bộ phận>. Các bộ phận: {dept_list()}, tong (nhận tất cả).")
         with self.lock:
             reply = handle_message(self.store, text, f"tg:{chat_id}", sender)
+        if cmd and cmd.name == "chuyen" and reply and reply.startswith("↪️"):
+            lead = self.store.get_lead(int(re.sub(r"\D", "", cmd.args.split()[0])))
+            self.send_report(f"↪️ Việc chuyển sang {dept_icon(lead['kind'])} {dept_name(lead['kind'])}:\n"
+                             + lead_line(lead, datetime.now()), lead["kind"])
         return reply or "Gõ /help để xem các lệnh."
 
     def telegram_loop(self):
@@ -277,9 +325,7 @@ class CRMBot:
             if f"{now:%H:%M}" in times and tag not in sent:
                 sent.add(tag)
                 try:
-                    with self.lock:
-                        text = full_report(self.store, now)
-                    self.send_report(text)
+                    self.send_daily(now)
                 except Exception:  # noqa: BLE001
                     log.exception("Gửi báo cáo định kỳ thất bại")
             time.sleep(20)
@@ -344,8 +390,12 @@ def check(bot: CRMBot, secret: str) -> int:
         except Exception as e:  # noqa: BLE001
             print(f"LỖI – token sai hoặc không vào được Telegram ({e})")
             ok = False
-        n = len(bot.store.subscribed_chats())
-        print("3. Chat Telegram đã ghép nối:", n if n else "CHƯA CÓ – nhắn bot: /batdau " + (bot.pair_code or "<mã>"))
+        by_dept = bot.store.chats_by_dept()
+        n = sum(by_dept.values())
+        print("3. Chat Telegram đã ghép nối:", ", ".join(f"{dept_name(d)}: {c}" for d, c in by_dept.items())
+              if n else "CHƯA CÓ – nhắn bot: /batdau " + (bot.pair_code or "<mã>"))
+        if n and TONG not in by_dept:
+            print("   (Chưa có chat TỔNG – báo cáo tổng hợp sẽ không có ai nhận. Gõ /batdau <mã> không kèm bộ phận.)")
         ok &= n > 0
         report, groups = True, []
     else:

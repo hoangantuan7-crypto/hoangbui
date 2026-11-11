@@ -161,10 +161,13 @@ if [ -n "$TG_TOKEN" ]; then
 Việc còn lại trên điện thoại:
   1. Mở Telegram, tìm bot @$TG_NAME, bấm Start (Bắt đầu).
   2. Gõ:   /batdau $PAIR_CODE
-     -> bot trả lời "Đã kết nối" là xong.
-     (Muốn nhân viên cùng nhận: thêm bot vào nhóm Telegram rồi gõ lệnh trên trong nhóm.)
-  3. Nhờ ai nhắn vào Zalo shop: "lấy em 2 tủ lavabo 80 nhé"
-     -> Telegram nhận tin 🔔 báo đơn trong khoảng 15 giây.
+     -> bot trả lời "Đã kết nối" là xong. Chat này là chat TỔNG: nhận mọi tin + báo cáo.
+  3. (Bot điều phối) Tạo nhóm Telegram cho từng bộ phận, thêm bot vào nhóm, rồi gõ trong nhóm:
+       /batdau $PAIR_CODE sale       /batdau $PAIR_CODE ketoan
+       /batdau $PAIR_CODE kho        /batdau $PAIR_CODE kythuat
+     -> mỗi nhóm chỉ nhận việc của bộ phận mình.
+  4. Nhờ ai nhắn vào Zalo shop: "lấy em 2 tủ lavabo 80 nhé"
+     -> Telegram nhận tin 🛒 SALE trong khoảng 15 giây.
 
 Mã ghép nối: $PAIR_CODE  (giữ kín – ai có mã này sẽ xem được tin khách)
 Xem log bot:      docker logs -f zalo-order-bot

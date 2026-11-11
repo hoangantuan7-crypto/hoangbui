@@ -9,7 +9,9 @@ Biến môi trường:
                           Bỏ trống thì bot tự học khi ZaloCRM báo sự kiện zalo.connected.
   REPORT_TIMES            mặc định "08:00,17:00"
   POLL_SECONDS            bao lâu hỏi ZaloCRM tin mới 1 lần (giây), mặc định 15; 0 = chỉ dùng webhook
-  SCAN_GROUPS             "1" = quét cả tin trong nhóm Zalo (mặc định chỉ chat riêng với khách)
+  SCAN_GROUPS             quét tin trong nhóm Zalo: "auto" (mặc định) = chỉ nhóm mà shop/nhân viên đã nhắn trong 14
+                          ngày; "1" = mọi nhóm; "0" = không quét nhóm
+  STAFF_NAMES             tên nick Zalo nhân viên, cách nhau dấu phẩy (thêm/bớt trong Telegram: /nhanvien)
   SHOP_NAMES / SHOP_UIDS  tên / mã nick Zalo của shop (script cài đặt tự điền) – để nhận ra tin shop trả lời
   REPLY_MINUTES           khách chờ bao nhiêu phút chưa được trả lời thì nhắc, mặc định 15
   WORK_HOURS              giờ làm việc để nhắc, mặc định 07:00-21:00
@@ -56,7 +58,7 @@ log = logging.getLogger("zalocrm-bot")
 
 class CRMBot:
     def __init__(self, store: Store, crm: ZaloCRM, report_group: str, account_id: str = "",
-                 scan_groups: bool = False, telegram: Telegram | None = None, pair_code: str = "",
+                 scan_groups: bool | str = False, telegram: Telegram | None = None, pair_code: str = "",
                  dept_bots: dict[str, Telegram] | None = None):
         self.store = store
         self.crm = crm
@@ -79,10 +81,13 @@ class CRMBot:
         # Nick Zalo của shop: tin gửi từ điện thoại có thể bị ZaloCRM ghi nhầm là tin khách -> nhận ra bằng tên/mã
         self.shop_names: set[str] = set()
         self.shop_uids: set[str] = set()
+        self.staff_env: set[str] = set()  # tên nick Zalo nhân viên (khai trong .env); thêm/bớt bằng /nhanvien
         self.reply_minutes = 15       # khách chờ quá ngần này phút chưa được trả lời -> nhắc anh
         self.second_minutes = 60      # vẫn chưa trả lời -> nhắc lần 2
         self.work_hours = "07:00-21:00"
-        self.scan_groups = scan_groups  # mặc định chỉ quét chat riêng; nhóm cộng đồng dễ báo nhầm
+        # Quét tin trong nhóm Zalo: "0" không quét · "1" quét mọi nhóm ·
+        # "auto" chỉ quét nhóm làm việc với khách = nhóm mà shop/nhân viên đã nhắn trong 14 ngày (bỏ qua nhóm CLB…)
+        self.scan_groups = {True: "1", False: "0"}.get(scan_groups, str(scan_groups))
         self.lock = threading.Lock()
         self.recent_out: deque[str] = deque(maxlen=50)  # chống bot tự đọc lại tin của chính nó
 
@@ -141,7 +146,7 @@ class CRMBot:
             return
         text = (data.get("content") or "").strip()
         is_self = (event == "message.sent" or str(data.get("senderUid") or "") in self.shop_uids
-                   or (bool(data.get("senderName")) and norm(data["senderName"]) in self.shop_names))
+                   or self.is_shop_person(data.get("senderName")))
         if is_self and text in self.recent_out:
             return
         conv = self.crm.conversation(data.get("conversationId", ""))
@@ -151,6 +156,9 @@ class CRMBot:
         report = self.report_conv()
         contact = conv.get("contact") or {}
         name, phone = contact.get("fullName") or "", contact.get("phone") or ""
+        chat_title = name  # tên khách (chat riêng) hoặc tên nhóm
+        if conv.get("threadType") == "group":  # trong nhóm: "khách" là người gửi, kèm tên nhóm
+            name, phone = f"{data.get('senderName') or 'Khách'} (nhóm {name or '?'})", ""
         is_text = data.get("contentType") in (None, "", "text") and bool(text)
         if not (report and conv["id"] == report["id"]):
             self.track_reply(conv, name, phone, data, is_self, text if is_text else "")
@@ -166,12 +174,12 @@ class CRMBot:
             elif is_self:
                 # Anh/nhân viên gõ "Đơn: ..." hoặc lệnh ngay trong chat với khách -> trả lời vào nhóm báo cáo
                 reply = handle_message(self.store, text, conv["id"], use_ai=False,
-                                       default_customer=name, phone=phone)
+                                       default_customer=chat_title, phone=phone)
                 if reply:
                     if reply.startswith("✅ Đã ghi đơn"):
                         self.store.close_leads(conv_id=conv["id"])  # đã lên đơn -> tin khách coi như xong
-                    reply = f"[chat với {name}]\n{reply}"
-            elif not parse_command(text) and (conv.get("threadType") != "group" or self.scan_groups):
+                    reply = f"[chat với {chat_title}]\n{reply}"
+            elif not parse_command(text) and self.chat_tracked(conv):
                 reply, target, lead_id = self._customer_message(text, conv["id"], name, phone)
             else:
                 reply = None
@@ -291,6 +299,53 @@ class CRMBot:
         return botname == DIEUPHOI
 
     # ---------- Khách chờ trả lời ----------
+    def staff_names(self) -> set[str]:
+        saved = {n for n in self.store.get_setting("staff_names").split("\n") if n}
+        return self.staff_env | saved
+
+    def is_shop_person(self, sender_name: str | None) -> bool:
+        """Tin của nick shop hoặc nhân viên shop -> là shop trả lời, không phải khách."""
+        key = norm(sender_name or "")
+        return bool(key) and (key in self.shop_names or key in self.staff_names())
+
+    def group_ok(self, conv_id: str) -> bool:
+        if self.scan_groups == "1":
+            return True
+        if self.scan_groups != "auto":
+            return False
+        state = self.store.get_conv_state(conv_id)
+        return bool(state and state["last_shop_at"]
+                    and (utc_now() - parse_ts(state["last_shop_at"])).days < 14)
+
+    def chat_tracked(self, conv: dict) -> bool:
+        """Chat riêng: luôn theo dõi. Nhóm: theo chế độ SCAN_GROUPS."""
+        return conv.get("threadType") != "group" or self.group_ok(conv["id"])
+
+    def waiting_rows(self):
+        return [r for r in self.store.waiting_convs(include_groups=True)
+                if r["thread_type"] != "group" or self.group_ok(r["conv_id"])]
+
+    def staff_command(self, args: str) -> str:
+        """/nhanvien · /nhanvien them Tên A, Tên B · /nhanvien xoa Tên A"""
+        saved = [n for n in self.store.get_setting("staff_display").split("\n") if n]
+        parts = args.split(None, 1)
+        action = norm(parts[0]) if parts else ""
+        names = [n.strip() for n in (parts[1] if len(parts) > 1 else "").split(",") if n.strip()]
+        if action in ("them", "add") and names:
+            saved += [n for n in names if norm(n) not in {norm(s) for s in saved}]
+        elif action in ("xoa", "bo", "del") and names:
+            drop = {norm(n) for n in names}
+            saved = [s for s in saved if norm(s) not in drop]
+        elif action:
+            return "Cú pháp: /nhanvien · /nhanvien them Lê Tấn Phát, Phát · /nhanvien xoa Phát"
+        self.store.set_setting("staff_display", "\n".join(saved))
+        self.store.set_setting("staff_names", "\n".join(norm(s) for s in saved))
+        listed = saved + sorted(self.staff_env - {norm(s) for s in saved})
+        return ("👥 NHÂN VIÊN SHOP (tin của họ = shop trả lời, không phải khách):\n"
+                + ("\n".join(f"  • {n}" for n in listed) if listed else "  (chưa có ai)")
+                + "\nThêm: /nhanvien them Tên A, Tên B · Bớt: /nhanvien xoa Tên A\n"
+                "Gõ đúng tên hiển thị trên Zalo của từng người.")
+
     def track_reply(self, conv: dict, name: str, phone: str, data: dict, is_self: bool, text: str):
         """Ghi ai nói cuối trong từng cuộc chat; khách tỏ ý chưa được giải đáp đúng -> báo riêng anh ngay."""
         thread = conv.get("threadType") or "user"
@@ -302,14 +357,14 @@ class CRMBot:
             return  # khách gửi sticker/ảnh: không tính là câu hỏi cần trả lời
         prev = self.store.customer_said(conv["id"], name or "Khách", phone, thread, at, text, needs_reply(text))
         if (dissatisfied(text) and prev is not None and prev["last_shop_at"]
-                and (thread == "user" or self.scan_groups)):
+                and self.chat_tracked(conv)):
             who = (name or "Khách") + (f" ({phone})" if phone else "")
             self.report_problem(f"⚠️ {who} có vẻ CHƯA ĐƯỢC GIẢI ĐÁP ĐÚNG:\n💬 “{short(text, 200)}”\n"
                                 "→ Anh xem lại câu khách hỏi trước đó và trả lời lại giúp em.")
 
     def unanswered_text(self, now: datetime | None = None, min_minutes: float = 0) -> str:
         now = now or utc_now()
-        rows = [r for r in self.store.waiting_convs(self.scan_groups)
+        rows = [r for r in self.waiting_rows()
                 if (now - parse_ts(r["wait_since"])).total_seconds() >= min_minutes * 60]
         if not rows:
             return "✅ Không có khách nào đang chờ anh trả lời."
@@ -322,7 +377,7 @@ class CRMBot:
         if not in_work_hours(local, self.work_hours):
             return False
         first, second = [], []
-        for r in self.store.waiting_convs(self.scan_groups):
+        for r in self.waiting_rows():
             mins = (now - parse_ts(r["wait_since"])).total_seconds() / 60
             if r["remind_level"] == 0 and mins >= self.reply_minutes:
                 first.append(r)
@@ -538,6 +593,8 @@ class CRMBot:
             return "🔕 Đã ngắt kết nối. Gõ /batdau <mã> để kết nối lại."
         if cmd and cmd.name == "chuatraloi":
             return self.unanswered_text()
+        if cmd and cmd.name == "nhanvien":
+            return self.staff_command(cmd.args)
         my_dept = bot_dept or self.store.chat_dept(chat_id)
         if cmd and cmd.name == "choxuly":
             with self.lock:
@@ -709,7 +766,7 @@ def main():
     store = Store(os.environ.get("DB_PATH", "orders.db"))
     bot = CRMBot(store, ZaloCRM(url, key), os.environ.get("ZALOCRM_REPORT_GROUP", ""),
                  os.environ.get("ZALOCRM_ACCOUNT_ID", ""),
-                 scan_groups=os.environ.get("SCAN_GROUPS", "0") == "1",
+                 scan_groups=os.environ.get("SCAN_GROUPS", "auto").strip() or "auto",
                  telegram=Telegram(os.environ["TELEGRAM_BOT_TOKEN"]) if os.environ.get("TELEGRAM_BOT_TOKEN") else None,
                  pair_code=os.environ.get("PAIR_CODE", ""),
                  dept_bots={d: Telegram(os.environ[f"TELEGRAM_TOKEN_{d.upper()}"]) for d in DEPTS
@@ -725,6 +782,7 @@ def main():
     remind = int(os.environ.get("REMIND_MINUTES", "30"))
     bot.remind_minutes = remind
     bot.shop_names = {norm(n) for n in os.environ.get("SHOP_NAMES", "").split(",") if n.strip()}
+    bot.staff_env = {norm(n) for n in os.environ.get("STAFF_NAMES", "").split(",") if n.strip()}
     bot.shop_uids = {u.strip() for u in os.environ.get("SHOP_UIDS", "").split(",") if u.strip()}
     bot.reply_minutes = int(os.environ.get("REPLY_MINUTES", "15"))
     bot.work_hours = os.environ.get("WORK_HOURS", "07:00-21:00").strip()

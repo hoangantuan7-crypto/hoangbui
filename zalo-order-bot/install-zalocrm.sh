@@ -104,13 +104,36 @@ TG_TOKEN=$(printf '%s' "$TG_TOKEN" | tr -d '[:space:]')
 TG_NAME=""
 PAIR_CODE=""
 GROUP=$(env_get ORDER_BOT_REPORT_GROUP)
+tg_username() {  # tg_username TOKEN "tên bot" -> in @username, dừng nếu token sai
+  [[ "$1" =~ ^[0-9]+:[A-Za-z0-9_-]{30,}$ ]] \
+    || die "Token $2 không đúng dạng (dạng đúng: 123456789:AAH...). Copy lại từ @BotFather."
+  local me
+  me=$(curl -fsS --max-time 20 "https://api.telegram.org/bot$1/getMe" 2>/dev/null) \
+    || die "Telegram không nhận token $2 (sai token, hoặc máy không vào được Telegram)."
+  printf '%s' "$me" | sed -n 's/.*"username":"\([^"]*\)".*/\1/p'
+}
+DEPT_CODES="SALE KETOAN KHO KYTHUAT"
+dept_label() { case "$1" in SALE) echo "Bot Sale";; KETOAN) echo "Bot Kế toán";; KHO) echo "Bot Kho";; KYTHUAT) echo "Bot Kỹ thuật";; esac; }
+DEPT_LINES=""
 if [ -n "$TG_TOKEN" ]; then
-  [[ "$TG_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]{30,}$ ]] \
-    || die "Token Telegram không đúng dạng (dạng đúng: 123456789:AAH...). Copy lại từ @BotFather."
-  ME=$(curl -fsS --max-time 20 "https://api.telegram.org/bot$TG_TOKEN/getMe" 2>/dev/null) \
-    || die "Telegram không nhận token này (sai token, hoặc máy không vào được Telegram)."
-  TG_NAME=$(printf '%s' "$ME" | sed -n 's/.*"username":"\([^"]*\)".*/\1/p')
-  echo "Bot Telegram: @$TG_NAME"
+  TG_NAME=$(tg_username "$TG_TOKEN" "Bot Điều phối")
+  echo "🧭 Bot Điều phối: @$TG_NAME"
+  say "Bot riêng cho từng bộ phận (Enter = bỏ qua, Bot Điều phối báo thay)"
+  SEEN=" $TG_TOKEN "
+  for D in $DEPT_CODES; do
+    CUR=$(env_get "ORDER_BOT_TELEGRAM_TOKEN_$D")
+    if [ -n "$CUR" ]; then H="Enter = giữ token cũ"; else H="Enter = bỏ qua"; fi
+    T=$(ask "Token $(dept_label "$D") ($H): " "TELEGRAM_TOKEN_$D" "$CUR")
+    T=$(printf '%s' "$T" | tr -d '[:space:]')
+    if [ -n "$T" ]; then
+      case "$SEEN" in *" $T "*) die "Token $(dept_label "$D") trùng với bot khác. Mỗi bot phải tạo riêng với @BotFather.";; esac
+      SEEN="$SEEN$T "
+      U=$(tg_username "$T" "$(dept_label "$D")")
+      echo "   $(dept_label "$D"): @$U"
+      DEPT_LINES="$DEPT_LINES     @$U  ($(dept_label "$D"))\n"
+    fi
+    eval "TOKEN_$D=\$T"
+  done
   PAIR_CODE=$(env_get ORDER_BOT_PAIR_CODE)
   [ -n "$PAIR_CODE" ] || PAIR_CODE=$(LC_ALL=C tr -dc '0-9' </dev/urandom 2>/dev/null | head -c 6 || true)
   echo "Bot chỉ ĐỌC tin Zalo, không gửi tin nào qua Zalo."
@@ -139,6 +162,9 @@ env_set ORDER_BOT_ACCOUNT_ID "$ACCOUNT_ID"
 env_set ORDER_BOT_REPORT_GROUP "${GROUP:-Bot đơn hàng}"
 env_set ORDER_BOT_TELEGRAM_TOKEN "$TG_TOKEN"
 [ -z "$PAIR_CODE" ] || env_set ORDER_BOT_PAIR_CODE "$PAIR_CODE"
+if [ -n "$TG_TOKEN" ]; then
+  for D in $DEPT_CODES; do eval "env_set ORDER_BOT_TELEGRAM_TOKEN_$D \"\$TOKEN_$D\""; done
+fi
 grep -qE "^ORDER_BOT_REPORT_TIMES=" .env || env_set ORDER_BOT_REPORT_TIMES "08:00,17:00"
 grep -qE "^ORDER_BOT_REMIND_MINUTES=" .env || env_set ORDER_BOT_REMIND_MINUTES "30"
 
@@ -158,16 +184,24 @@ if [ -n "$TG_TOKEN" ]; then
 
 ✅ CÀI XONG – báo đơn qua Telegram!
 
-Việc còn lại trên điện thoại:
-  1. Mở Telegram, tìm bot @$TG_NAME, bấm Start (Bắt đầu).
-  2. Gõ:   /batdau $PAIR_CODE
-     -> bot trả lời "Đã kết nối" là xong. Chat này là chat TỔNG: nhận mọi tin + báo cáo.
-  3. (Bot điều phối) Tạo nhóm Telegram cho từng bộ phận, thêm bot vào nhóm, rồi gõ trong nhóm:
-       /batdau $PAIR_CODE sale       /batdau $PAIR_CODE ketoan
-       /batdau $PAIR_CODE kho        /batdau $PAIR_CODE kythuat
-     -> mỗi nhóm chỉ nhận việc của bộ phận mình.
+Việc còn lại trên điện thoại (mã ghép nối: $PAIR_CODE):
+  1. Mở Bot Điều phối @$TG_NAME, bấm Start, gõ:   /batdau $PAIR_CODE
+     -> chat riêng của anh với Bot Điều phối: nhận báo cáo tổng + báo sự cố.
+EOF
+  if [ -n "$DEPT_LINES" ]; then
+    printf '  2. Mở lần lượt từng bot bộ phận, bấm Start, gõ  /batdau %s  trong mỗi bot:\n' "$PAIR_CODE"
+    printf "$DEPT_LINES"
+    printf '     -> bot nào có việc quá hạn sẽ nhắn RIÊNG cho anh.\n'
+  fi
+  cat <<EOF
+  3. PHÒNG ĐIỀU PHỐI:
+     a) Nhắn @BotFather:  /setprivacy  -> chọn @$TG_NAME -> Disable
+        (để Bot Điều phối đọc được lệnh trong nhóm như /xong K5)
+     b) Tạo 1 nhóm Telegram, thêm Bot Điều phối và các bot bộ phận vào nhóm, rồi gõ trong nhóm:
+          /batdau@$TG_NAME $PAIR_CODE phong
+     -> Bot Điều phối sẽ gọi tên từng bot giao việc trong nhóm này.
   4. Nhờ ai nhắn vào Zalo shop: "lấy em 2 tủ lavabo 80 nhé"
-     -> Telegram nhận tin 🛒 SALE trong khoảng 15 giây.
+     -> trong phòng: Bot Điều phối giao việc cho Bot Sale, Bot Sale xác nhận (khoảng 15 giây).
 
 Mã ghép nối: $PAIR_CODE  (giữ kín – ai có mã này sẽ xem được tin khách)
 Xem log bot:      docker logs -f zalo-order-bot

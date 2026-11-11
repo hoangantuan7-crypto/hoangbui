@@ -15,6 +15,8 @@ Biến môi trường:
   DB_PATH                 mặc định orders.db
   TELEGRAM_BOT_TOKEN      token bot Telegram (lấy từ @BotFather). Có token -> bot chỉ ĐỌC Zalo,
                           mọi thông báo/lệnh qua Telegram, không gửi tin Zalo nào
+  TELEGRAM_TOKEN_SALE / _KETOAN / _KHO / _KYTHUAT
+                          (tùy chọn) token bot riêng của từng bộ phận; bộ phận chưa có bot -> Bot Điều phối báo thay
   PAIR_CODE               mã ghép nối: gõ "/batdau <mã>" cho bot Telegram để nhận thông báo
   ANTHROPIC_API_KEY       (tùy chọn) tự nhận đơn từ tin nhắn khách viết tự do
 """
@@ -33,8 +35,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from .ai_parser import ai_available, ai_parse_order
 from .db import Store
 from .handlers import _confirm_order, handle_message
-from .parser import looks_like_order, parse_command
-from .departments import DEPTS, TONG, dept_icon, dept_list, dept_name, parse_dept, route
+from .parser import looks_like_order, parse_command, parse_order
+from .dept_bots import ALLOWED, BOT_NAMES, DIEUPHOI, FREE_TEXT_ORDERS, dept_help, not_allowed
+from .departments import DEPTS, ROOM, TONG, dept_icon, dept_list, dept_name, parse_dept, route
 from .reports import full_report, lead_line, report_leads
 from .text import norm
 from .zalo import split_text
@@ -46,14 +49,23 @@ log = logging.getLogger("zalocrm-bot")
 
 class CRMBot:
     def __init__(self, store: Store, crm: ZaloCRM, report_group: str, account_id: str = "",
-                 scan_groups: bool = False, telegram: Telegram | None = None, pair_code: str = ""):
+                 scan_groups: bool = False, telegram: Telegram | None = None, pair_code: str = "",
+                 dept_bots: dict[str, Telegram] | None = None):
         self.store = store
         self.crm = crm
         self.report_key = norm(report_group)
         if account_id:
             store.set_setting("account_id", account_id)
         self.tg = telegram          # có Telegram: chỉ ĐỌC Zalo, mọi thông báo gửi qua Telegram
+        # 5 bot riêng: "dieuphoi" + bot của từng bộ phận (bộ phận chưa có bot -> Bot Điều phối báo thay)
+        self.bots: dict[str, Telegram] = ({DIEUPHOI: telegram, **(dept_bots or {})} if telegram else {})
+        if telegram:
+            # chat ghép nối từ bản cũ (1 bot) thuộc Bot Điều phối
+            store.conn.execute(f"UPDATE chats SET chat_id='{DIEUPHOI}:' || chat_id WHERE chat_id NOT LIKE '%:%'")
+            store.conn.commit()
         self.pair_code = pair_code
+        self.usernames: dict[str, str] = {}  # tên @ của từng bot (để gọi tên nhau trong phòng điều phối)
+        self.poll_failures = 0
         self.scan_groups = scan_groups  # mặc định chỉ quét chat riêng; nhóm cộng đồng dễ báo nhầm
         self.lock = threading.Lock()
         self.recent_out: deque[str] = deque(maxlen=50)  # chống bot tự đọc lại tin của chính nó
@@ -78,15 +90,12 @@ class CRMBot:
         """Gửi tin. Chế độ Telegram: dept=None -> chat tổng (không có thì mọi chat);
         dept=<bộ phận> -> nhóm của bộ phận đó + chat tổng."""
         if self.tg:
-            chats = self.store.subscribed_chats(dept or TONG) or (self.store.subscribed_chats() if not dept else [])
+            chats = self.targets(dept)
             if not chats:
                 log.warning("Chưa có chat Telegram nào ghép nối (gõ /batdau <mã> cho bot Telegram)")
                 return False
-            for chat_id in chats:
-                try:
-                    self.tg.send(chat_id, text)
-                except Exception:  # noqa: BLE001 - 1 chat lỗi không chặn chat khác
-                    log.exception("Gửi Telegram tới 1 chat thất bại")
+            for key in chats:
+                self._tg_send(key, text)
             return True
         account_id = self.store.get_setting("account_id")
         conv = self.report_conv()
@@ -147,23 +156,25 @@ class CRMBot:
                 else:
                     self.store.mark_conv_replied(conv["id"])  # anh đã trả lời khách -> thôi nhắc lại
             elif not parse_command(text) and (conv.get("threadType") != "group" or self.scan_groups):
-                reply, target = self._customer_message(text, conv["id"], name, phone)
+                reply, target, lead_id = self._customer_message(text, conv["id"], name, phone)
             else:
                 reply = None
-        if reply:
+        if reply and target and self.room_key():
+            self.assign_in_room(reply, target, lead_id)
+        elif reply:
             self.send_report(reply, target)
 
-    def _customer_message(self, text: str, conv_id: str, name: str, phone: str) -> tuple[str | None, str | None]:
+    def _customer_message(self, text: str, conv_id: str, name: str, phone: str) -> tuple:
         """Bot điều phối: đọc tin khách, chọn bộ phận, báo vào nhóm bộ phận đó. Không nhắn lại cho khách.
-        Trả về (nội dung báo, bộ phận)."""
+        Trả về (nội dung báo, bộ phận, mã việc)."""
         dept = route(text)
         if dept is None and ai_available() and looks_like_order(text):
             dept = "sale"
         if dept is None:
-            return None, None
+            return None, None, None
         lead_id, is_new = self.store.add_lead(conv_id, name or "Khách", phone, dept, text)
         if not is_new:
-            return None, None  # khách nhắn tiếp cùng việc: gộp vào tin cũ, không báo trùng
+            return None, None, None  # khách nhắn tiếp cùng việc: gộp vào tin cũ, không báo trùng
         who = (name or "Khách") + (f" ({phone})" if phone else "")
         icon, dname, title = DEPTS[dept]
         lines = [f"{icon} {dname.upper()} – {title} – K{lead_id}", f"👤 {who}", f"💬 “{text}”"]
@@ -174,7 +185,7 @@ class CRMBot:
                                            order.note, conv_id, text)
                 lines.append("🤖 Bot đã ghi thử thành đơn, anh kiểm tra lại:\n" + _confirm_order(self.store, oid))
         lines.append(f"→ Xong gõ /xong K{lead_id} · Sai bộ phận: /chuyen K{lead_id} <bộ phận>")
-        return "\n".join(lines), dept
+        return "\n".join(lines), dept, lead_id
 
     def remind_pending(self, minutes: int, now: datetime | None = None) -> bool:
         """Nhắc các tin khách đã chờ quá `minutes` phút mà chưa ai xử lý."""
@@ -191,12 +202,101 @@ class CRMBot:
                               f"CHƯA XỬ LÝ (quá {minutes} phút)"]
                              + [lead_line(lead, now) for lead in group]
                              + ["  → /xong K<mã> khi đã xử lý"])
-            sent |= self.send_report(text, dept)
+            sent |= self.report_problem(text, dept) if self.room_key() else self.send_report(text, dept)
         return sent
 
+    # ---------- Phòng điều phối: Bot Điều phối gọi tên từng bot giao việc ----------
+    def room_key(self) -> str | None:
+        """Nhóm Telegram làm phòng điều phối (ghép bằng "/batdau <mã> phong" với Bot Điều phối)."""
+        if not self.tg:
+            return None
+        for key, dept in self.store.subscribed_rows():
+            if dept == ROOM and key.startswith(f"{DIEUPHOI}:"):
+                return key
+        return None
+
+    def mention(self, botname: str) -> str:
+        icon, title = BOT_NAMES[botname]
+        user = self.usernames.get(botname)
+        return f"{icon} @{user}" if user else f"{icon} {title}"
+
+    def assign_in_room(self, text: str, dept: str, lead_id: int):
+        """Bot Điều phối giao việc trong phòng, bot bộ phận xác nhận nhận việc ngay trong phòng."""
+        room = self.room_key()
+        group_id = room.partition(":")[2]
+        own_bot = dept in self.bots and dept != DIEUPHOI
+        self._tg_send(room, f"🧭 Giao việc K{lead_id} cho {self.mention(dept) if own_bot else dept_name(dept)}\n\n{text}")
+        if own_bot:
+            icon, title = BOT_NAMES[dept]
+            try:
+                self.bots[dept].send(group_id, f"{icon} {title}: Đã nhận việc K{lead_id}. Xử lý xong gõ /xong K{lead_id}")
+            except Exception:  # noqa: BLE001
+                log.exception("%s không nhắn được vào phòng điều phối", title)
+                self.report_problem(f"⚠️ {title} không nhắn được vào phòng điều phối – anh thêm {title} vào nhóm "
+                                    f"giúp em. Việc K{lead_id} vẫn đang chờ.")
+
+    def report_problem(self, text: str, dept: str | None = None) -> bool:
+        """Có vấn đề -> bot phụ trách nhắn RIÊNG cho anh (chat 1-1 với bot đó).
+        Bộ phận chưa có bot riêng hoặc anh chưa kết nối riêng với bot đó -> Bot Điều phối nhắn riêng."""
+        if not self.tg:
+            return self.send_report(text, dept)
+
+        def private(botname, depts):
+            return [k for k, d in self.store.subscribed_rows()
+                    if k.startswith(f"{botname}:") and not k.partition(":")[2].startswith("-") and d in depts]
+
+        keys = private(dept, {dept}) if dept and dept in self.bots and dept != DIEUPHOI else []
+        keys = keys or private(DIEUPHOI, {TONG}) or private(DIEUPHOI, set(DEPTS))
+        for key in keys:
+            self._tg_send(key, text)
+        return bool(keys)
+
+    def load_usernames(self):
+        for name, tg in self.bots.items():
+            try:
+                self.usernames[name] = tg.get_me().get("username", "")
+            except Exception:  # noqa: BLE001
+                log.warning("Không lấy được tên %s (token sai?)", BOT_NAMES[name][1])
+
+    def should_handle(self, botname: str, chat_id: str, text: str) -> bool:
+        """Trong nhóm (chat_id âm) nhiều bot cùng nghe: lệnh có @tên chỉ bot đó trả lời,
+        lệnh không có @ chỉ Bot Điều phối trả lời – tránh 5 bot cùng trả lời 1 câu."""
+        if not str(chat_id).startswith("-"):
+            return True
+        text = (text or "").strip()
+        if not text.startswith("/") and not (botname == DIEUPHOI and parse_order(text)):
+            return False  # tin trò chuyện thường trong nhóm: không trả lời (trừ tin ghi đơn "Đơn ...")
+        m = re.match(r"^/\w+@(\w+)", text)
+        if m:
+            return m.group(1).lower() == self.usernames.get(botname, "").lower()
+        return botname == DIEUPHOI
+
+    # ---------- Telegram: chọn bot + chat nhận tin ----------
+    def targets(self, dept: str | None) -> list[str]:
+        """Khóa chat ("<bot>:<chat_id>") nhận tin.
+        dept=None: báo cáo tổng -> chat tổng của Bot Điều phối.
+        dept có bot riêng -> chat của bot bộ phận đó (+ nhóm bộ phận ghép vào Bot Điều phối).
+        dept chưa có bot riêng -> Bot Điều phối: nhóm bộ phận + chat tổng."""
+        rows = self.store.subscribed_rows()
+        dp = [(k, d) for k, d in rows if k.startswith(f"{DIEUPHOI}:") and d != ROOM]
+        tong = [k for k, d in dp if d == TONG]
+        if dept is None:
+            return tong or [k for k, _ in dp]
+        mine = [k for k, d in rows if k.startswith(f"{dept}:") and dept in self.bots] + [k for k, d in dp if d == dept]
+        if dept in self.bots and dept != DIEUPHOI:
+            return mine or tong  # bot bộ phận chưa ai ghép nối -> báo về chat tổng, không sót việc
+        return mine + tong
+
+    def _tg_send(self, key: str, text: str):
+        botname, _, chat_id = key.partition(":")
+        bot = self.bots.get(botname) or self.bots.get(DIEUPHOI)
+        try:
+            bot.send(chat_id, text)
+        except Exception:  # noqa: BLE001 - 1 chat lỗi không chặn chat khác
+            log.exception("Gửi Telegram (%s) thất bại", botname)
+
     def dept_only_chats(self, dept: str) -> list[str]:
-        tong = set(self.store.subscribed_chats(TONG))
-        return [c for c in self.store.subscribed_chats(dept) if c not in tong]
+        return [k for k, d in self.store.subscribed_rows() if d == dept]
 
     def send_daily(self, now: datetime):
         """Báo cáo giờ cố định: chat tổng nhận báo cáo đầy đủ, nhóm bộ phận nhận việc tồn của mình."""
@@ -206,11 +306,8 @@ class CRMBot:
         self.send_report(text)
         if self.tg:
             for dept, body in per_dept.items():
-                for chat_id in self.dept_only_chats(dept):
-                    try:
-                        self.tg.send(chat_id, f"🗓 {now:%d/%m} – việc của bộ phận\n\n{body}")
-                    except Exception:  # noqa: BLE001
-                        log.exception("Gửi báo cáo bộ phận thất bại")
+                for key in self.dept_only_chats(dept):
+                    self._tg_send(key, f"🗓 {now:%d/%m} – việc của bộ phận\n\n{body}")
 
     # ---------- hỏi ZaloCRM định kỳ (không cần webhook) ----------
     def poll_once(self) -> int:
@@ -240,23 +337,45 @@ class CRMBot:
             self.store.set_setting("last_poll_msg", f"{datetime.now():%d/%m %H:%M:%S}")
         return count
 
+    def poll_tick(self):
+        """1 vòng hỏi tin. Lỗi 3 lần liên tiếp -> Bot Điều phối nhắn riêng anh (1 lần), đọc lại được thì báo."""
+        try:
+            self.poll_once()
+            self.store.prune_seen()
+            if self.poll_failures >= 3:
+                self.report_problem("✅ Bot Điều phối đã đọc lại được tin nhắn Zalo từ ZaloCRM.")
+            self.poll_failures = 0
+        except Exception:  # noqa: BLE001
+            log.exception("Lỗi khi hỏi tin nhắn mới từ ZaloCRM")
+            self.poll_failures += 1
+            if self.poll_failures == 3:  # báo 1 lần, không spam
+                self.report_problem("⚠️ Bot Điều phối không đọc được tin Zalo từ ZaloCRM (3 lần liên tiếp).\n"
+                                    "Kiểm tra: ZaloCRM còn chạy không, tài khoản Zalo còn kết nối không.")
+
     def poller(self, seconds: int):
         while True:
-            try:
-                self.poll_once()
-                self.store.prune_seen()
-            except Exception:  # noqa: BLE001
-                log.exception("Lỗi khi hỏi tin nhắn mới từ ZaloCRM")
+            self.poll_tick()
             time.sleep(seconds)
 
     # ---------- Telegram: nhận lệnh ----------
-    def handle_telegram(self, chat_id: str, text: str, sender: str = "") -> str | None:
-        chat_id, text = str(chat_id), (text or "").strip()
+    def handle_telegram(self, chat_id: str, text: str, sender: str = "", botname: str = DIEUPHOI) -> str | None:
+        """Tin nhắn gửi tới 1 bot Telegram. botname: "dieuphoi" hoặc mã bộ phận của bot đó."""
+        text = (text or "").strip()
         if not text:
             return None
+        bot_dept = None if botname == DIEUPHOI else botname
+        room = self.room_key()
+        in_room = bool(bot_dept and room and room.partition(":")[2] == str(chat_id))
+        chat_id = f"{botname}:{chat_id}"
+        icon, title = BOT_NAMES[botname]
         paired = pairing_reply(text, self.pair_code)
         if paired:
             ok, reply = paired
+            if ok and bot_dept:
+                self.store.subscribe(chat_id, sender, True, bot_dept)
+                log.info("Đã ghép nối thêm 1 chat với %s", title)
+                return (f"✅ Đã kết nối với {icon} {title}!\nBot sẽ báo vào đây mọi việc của bộ phận "
+                        f"{dept_name(bot_dept)} và nhắc lại nếu quá hạn. Gõ /help để xem lệnh.")
             if ok:
                 words = text.split()
                 dept = parse_dept(words[2]) if len(words) > 2 else TONG
@@ -264,24 +383,37 @@ class CRMBot:
                     return f"❓ Không rõ bộ phận '{words[2]}'. Chọn: {dept_list()} – hoặc bỏ trống để nhận tất cả."
                 self.store.subscribe(chat_id, sender, True, dept)
                 log.info("Đã ghép nối thêm 1 chat Telegram (%s)", dept)
+                if dept == ROOM:
+                    return ("✅ Đã đặt nhóm này làm PHÒNG ĐIỀU PHỐI.\nBot Điều phối sẽ giao việc ở đây, gọi tên từng "
+                            "bot bộ phận. Nhớ thêm Bot Sale, Kế toán, Kho, Kỹ thuật vào nhóm.\n"
+                            "Việc quá hạn và sự cố: từng bot nhắn RIÊNG cho anh.")
                 return reply + "\n" + (f"📌 Chat này là nhóm {dept_icon(dept)} {dept_name(dept)}: chỉ nhận việc của "
                                        "bộ phận này." if dept != TONG else
                                        "📌 Chat TỔNG: nhận mọi tin và báo cáo tổng hợp.")
             elif self.store.is_subscribed(chat_id):
                 return "✅ Chat này đã được kết nối. Gõ /help để xem lệnh."
             return reply
-        if not self.store.is_subscribed(chat_id):
+        if not self.store.is_subscribed(chat_id) and not in_room:  # bot bộ phận trong phòng điều phối: tự nhận lệnh
             return pairing_reply("/batdau", self.pair_code)[1]
         cmd = parse_command(text)
+        if bot_dept:  # bot bộ phận: chỉ nhận lệnh riêng của bộ phận
+            if cmd and cmd.name == "help":
+                return dept_help(bot_dept)
+            if cmd and cmd.name not in ALLOWED[bot_dept]:
+                return not_allowed(bot_dept, cmd.name)
+            if not cmd and botname not in FREE_TEXT_ORDERS:
+                return "Gõ /help để xem các lệnh của bot này."
         if cmd and cmd.name == "dangky":
             return "Chat này đã được kết nối rồi."
         if cmd and cmd.name == "huydangky":
             self.store.subscribe(chat_id, sender, False)
             return "🔕 Đã ngắt kết nối. Gõ /batdau <mã> để kết nối lại."
-        my_dept = self.store.chat_dept(chat_id)
+        my_dept = bot_dept or self.store.chat_dept(chat_id)
         if cmd and cmd.name == "choxuly":
             with self.lock:
-                return report_leads(self.store, dept=my_dept)
+                return report_leads(self.store, dept=None if my_dept in (TONG, ROOM) else my_dept)
+        if cmd and cmd.name == "bophan" and bot_dept:
+            return f"📌 Đây là {icon} {title}: chỉ báo và nhận việc của bộ phận {dept_name(bot_dept)}."
         if cmd and cmd.name == "bophan":
             return (f"📌 Chat này: {dept_icon(my_dept)} {dept_name(my_dept)}.\n"
                     f"Đổi bộ phận: /batdau <mã> <bộ phận>. Các bộ phận: {dept_list()}, tong (nhận tất cả).")
@@ -289,27 +421,34 @@ class CRMBot:
             reply = handle_message(self.store, text, f"tg:{chat_id}", sender)
         if cmd and cmd.name == "chuyen" and reply and reply.startswith("↪️"):
             lead = self.store.get_lead(int(re.sub(r"\D", "", cmd.args.split()[0])))
-            self.send_report(f"↪️ Việc chuyển sang {dept_icon(lead['kind'])} {dept_name(lead['kind'])}:\n"
-                             + lead_line(lead, datetime.now()), lead["kind"])
+            body = f"↪️ Việc chuyển sang {dept_icon(lead['kind'])} {dept_name(lead['kind'])}:\n" + lead_line(lead, datetime.now())
+            if self.room_key():
+                self.assign_in_room(body, lead["kind"], lead["id"])
+            else:
+                self.send_report(body, lead["kind"])
         return reply or "Gõ /help để xem các lệnh."
 
-    def telegram_loop(self):
-        offset = int(self.store.get_setting("tg_offset", "0") or 0)
+    def telegram_loop(self, botname: str = DIEUPHOI):
+        tg = self.bots[botname]
+        setting = "tg_offset" if botname == DIEUPHOI else f"tg_offset_{botname}"
+        offset = int(self.store.get_setting(setting, "0") or 0)
         while True:
             try:
-                for upd in self.tg.get_updates(offset):
+                for upd in tg.get_updates(offset):
                     offset = max(offset, int(upd["update_id"]) + 1)
-                    self.store.set_setting("tg_offset", str(offset))
+                    self.store.set_setting(setting, str(offset))
                     msg = upd.get("message") or {}
                     chat = msg.get("chat") or {}
                     sender = (msg.get("from") or {}).get("first_name", "")
                     if not chat.get("id") or (msg.get("from") or {}).get("is_bot"):
                         continue
-                    reply = self.handle_telegram(chat["id"], msg.get("text", ""), sender)
+                    if not self.should_handle(botname, str(chat["id"]), msg.get("text", "")):
+                        continue
+                    reply = self.handle_telegram(chat["id"], msg.get("text", ""), sender, botname)
                     if reply:
-                        self.tg.send(str(chat["id"]), reply)
+                        tg.send(str(chat["id"]), reply)
             except Exception:  # noqa: BLE001
-                log.exception("Lỗi Telegram, thử lại sau 5 giây")
+                log.exception("Lỗi %s, thử lại sau 5 giây", BOT_NAMES[botname][1])
                 time.sleep(5)
 
     # ---------- báo cáo định kỳ ----------
@@ -384,19 +523,25 @@ def check(bot: CRMBot, secret: str) -> int:
         print(f"LỖI – không gọi được ZaloCRM ({e})")
         return 1
     if bot.tg:
-        print("2. Bot Telegram: ", end="")
-        try:
-            print("OK – @" + bot.tg.get_me().get("username", "?"))
-        except Exception as e:  # noqa: BLE001
-            print(f"LỖI – token sai hoặc không vào được Telegram ({e})")
+        print("2. Các bot Telegram:")
+        rows = bot.store.subscribed_rows()
+        for name in [DIEUPHOI, *DEPTS]:
+            icon, title = BOT_NAMES[name]
+            if name not in bot.bots:
+                print(f"   {icon} {title}: chưa tạo – Bot Điều phối báo thay")
+                continue
+            try:
+                user = "@" + bot.bots[name].get_me().get("username", "?")
+            except Exception as e:  # noqa: BLE001
+                user, ok = f"LỖI token ({e})", False
+            n = sum(1 for k, _ in rows if k.startswith(f"{name}:"))
+            print(f"   {icon} {title}: {user} – {n} chat đã kết nối"
+                  + ("" if n else f" (mở bot, gõ /batdau {bot.pair_code or '<mã>'})"))
+        if not any(k.startswith(f"{DIEUPHOI}:") and d == TONG for k, d in rows):
+            print("3. CHƯA có chat tổng: mở Bot Điều phối, gõ /batdau <mã> để nhận báo cáo tổng.")
             ok = False
-        by_dept = bot.store.chats_by_dept()
-        n = sum(by_dept.values())
-        print("3. Chat Telegram đã ghép nối:", ", ".join(f"{dept_name(d)}: {c}" for d, c in by_dept.items())
-              if n else "CHƯA CÓ – nhắn bot: /batdau " + (bot.pair_code or "<mã>"))
-        if n and TONG not in by_dept:
-            print("   (Chưa có chat TỔNG – báo cáo tổng hợp sẽ không có ai nhận. Gõ /batdau <mã> không kèm bộ phận.)")
-        ok &= n > 0
+        else:
+            print("3. Chat tổng: có")
         report, groups = True, []
     else:
         print("2. Tài khoản Zalo gửi tin:", "có" if bot.store.get_setting("account_id") else "CHƯA CÓ")
@@ -427,7 +572,9 @@ def main():
                  os.environ.get("ZALOCRM_ACCOUNT_ID", ""),
                  scan_groups=os.environ.get("SCAN_GROUPS", "0") == "1",
                  telegram=Telegram(os.environ["TELEGRAM_BOT_TOKEN"]) if os.environ.get("TELEGRAM_BOT_TOKEN") else None,
-                 pair_code=os.environ.get("PAIR_CODE", ""))
+                 pair_code=os.environ.get("PAIR_CODE", ""),
+                 dept_bots={d: Telegram(os.environ[f"TELEGRAM_TOKEN_{d.upper()}"]) for d in DEPTS
+                            if os.environ.get(f"TELEGRAM_TOKEN_{d.upper()}")})
     if "--check" in sys.argv:
         raise SystemExit(check(bot, os.environ.get("ZALOCRM_WEBHOOK_SECRET", "")))
     if "--send-report" in sys.argv:  # gửi báo cáo ngay rồi thoát (nút trên GitHub Actions)
@@ -438,9 +585,12 @@ def main():
     times = [t.strip() for t in os.environ.get("REPORT_TIMES", "08:00,17:00").split(",") if t.strip()]
     remind = int(os.environ.get("REMIND_MINUTES", "30"))
     threading.Thread(target=bot.scheduler, args=(times, remind), daemon=True).start()
-    if bot.tg:
-        threading.Thread(target=bot.telegram_loop, daemon=True).start()
-        log.info("Chế độ Telegram: chỉ đọc tin Zalo, thông báo gửi qua Telegram")
+    bot.load_usernames()
+    for name in bot.bots:
+        threading.Thread(target=bot.telegram_loop, args=(name,), daemon=True).start()
+    if bot.bots:
+        log.info("Chế độ Telegram: chỉ đọc tin Zalo. Bot đang chạy: %s",
+                 ", ".join(BOT_NAMES[n][1] for n in bot.bots))
     poll = int(os.environ.get("POLL_SECONDS", "15"))
     if poll > 0:
         threading.Thread(target=bot.poller, args=(poll,), daemon=True).start()

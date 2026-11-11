@@ -8,6 +8,7 @@ from .detect import is_order_message
 from .text import norm
 
 TONG = "tong"
+ROOM = "phong"  # "phòng điều phối": nhóm Telegram có anh + cả 5 bot, Bot Điều phối giao việc ở đây
 
 # mã -> (biểu tượng, tên hiển thị, tiêu đề tin báo)
 DEPTS = {
@@ -36,7 +37,8 @@ ALIASES = {"sale": "sale", "sales": "sale", "banhang": "sale", "kinhdoanh": "sal
            "ketoan": "ketoan", "kt": "ketoan", "taichinh": "ketoan",
            "kho": "kho", "khovan": "kho", "giaohang": "kho",
            "kythuat": "kythuat", "kithuat": "kythuat", "tho": "kythuat", "baohanh": "kythuat",
-           "tong": TONG, "all": TONG, "chu": TONG, "admin": TONG}
+           "tong": TONG, "all": TONG, "chu": TONG, "admin": TONG,
+           "phong": ROOM, "nhom": ROOM, "phongdieuphoi": ROOM, "dieuphoi": ROOM, "room": ROOM}
 
 LEGACY = {"order": "sale", "payment": "ketoan"}  # loại tin cũ trước khi có bộ phận
 
@@ -60,6 +62,8 @@ def dept_icon(dept: str) -> str:
 
 def dept_name(dept: str) -> str:
     dept = LEGACY.get(dept, dept)
+    if dept == ROOM:
+        return "Phòng điều phối"
     return "Tổng" if dept == TONG else DEPTS.get(dept, ("", dept))[1]
 
 

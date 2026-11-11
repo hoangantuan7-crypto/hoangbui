@@ -29,6 +29,40 @@ Thông báo đơn, nhắc việc, báo cáo 8h và 17h, và các lệnh `/choxul
 
 Người không có mã ghép nối không xem được gì và không ra lệnh được cho bot. Gõ `/huydangky` để ngắt một chat.
 
+### 5 bot riêng và phòng điều phối
+
+Anh có thể dùng **5 bot Telegram riêng**, mỗi bot có tên và khung chat riêng, nhưng cả 5 dùng chung một kho dữ liệu:
+
+| Bot | Việc |
+|---|---|
+| 🧭 Bot Điều phối | Đọc tin Zalo, chia việc, gửi báo cáo tổng, báo sự cố (ví dụ không đọc được Zalo) |
+| 🛒 Bot Sale | Đặt hàng, hỏi giá. Lệnh: ghi đơn, `/donmo`, `/nhac`, `/giao`… |
+| 💰 Bot Kế toán | Chuyển khoản, hóa đơn, công nợ |
+| 📦 Bot Kho | Giao hàng, đổi trả. Lệnh: `/thieu`, `/ton`, `/nhap`, `/lavabo`, `/datxuong`… |
+| 🔧 Bot Kỹ thuật | Lắp đặt, bảo hành, sửa chữa |
+
+Mỗi bot chỉ nhận lệnh của bộ phận mình. Gõ `/help` trong từng bot để xem danh sách lệnh.
+
+**Tạo bot:** nhắn @BotFather `/newbot`, mỗi bot một lần (5 lần), mỗi lần ra một token khác nhau. Sau đó chạy script cài
+đặt và dán từng token khi script hỏi. Bộ phận nào bỏ qua (bấm Enter) thì Bot Điều phối báo thay.
+
+**Kết nối:** mở từng bot, bấm Start, gõ `/batdau <mã>`.
+
+**Phòng điều phối:** tạo một nhóm Telegram gồm anh và cả 5 bot.
+- Nhắn @BotFather `/setprivacy`, chọn Bot Điều phối, chọn **Disable**.
+- Trong nhóm, gõ `/batdau@<tên Bot Điều phối> <mã> phong`.
+
+Từ đó:
+- Có việc mới: Bot Điều phối **gọi tên** bot phụ trách ngay trong nhóm ("Giao việc K5 cho @BotKyThuat…"), và bot đó
+  xác nhận "Đã nhận việc K5".
+- Có vấn đề (việc quá 30 phút chưa xử lý, bot chưa được thêm vào nhóm, không đọc được Zalo): bot phụ trách
+  **nhắn riêng cho anh**.
+- Trong nhóm: gõ `/xong K5`, `/choxuly`, `/chuyen K5 kho` (Bot Điều phối trả lời). Lệnh riêng của một bot thì gọi tên
+  bot đó, ví dụ `/thieu@<tên Bot Kho>`. Tin trò chuyện thường trong nhóm, các bot không trả lời.
+
+Telegram không cho bot đọc tin của bot khác trong nhóm. Vì cả 5 bot chạy chung một chương trình, chúng phối hợp với
+nhau từ bên trong; trong nhóm anh vẫn thấy từng bot lên tiếng.
+
 ### Bot điều phối: chia việc cho từng bộ phận
 
 Bot đọc từng tin khách, rồi giao việc cho bộ phận phù hợp:

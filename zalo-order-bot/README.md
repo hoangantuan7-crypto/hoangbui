@@ -80,6 +80,20 @@ Một số bản ZaloCRM ghi nhầm tin anh trả lời bằng điện thoại t
 Zalo của shop** (`ORDER_BOT_SHOP_NAMES`), nhờ đó bot vẫn nhận ra đó là shop trả lời và không báo nhầm thành việc.
 Đổi thời gian bằng `ORDER_BOT_REPLY_MINUTES` và `ORDER_BOT_WORK_HOURS` trong `.env`.
 
+### Nhân viên shop và nhóm Zalo có khách
+
+- **Nhân viên shop** (ví dụ Lê Tấn Phát, Phát, Tấn Phát Cs, nick cá nhân của anh): tin của họ được tính là **shop
+  trả lời**. Bot không coi đó là khách, không tạo việc, không đề xuất trả lời. Nhân viên trả lời khách trong nhóm
+  thì bot tự thôi nhắc.
+  - Script cài đặt có hỏi danh sách nhân viên.
+  - Trong Telegram: `/nhanvien` xem danh sách, `/nhanvien them Tên A, Tên B` thêm người, `/nhanvien xoa Tên A` bớt người.
+    Gõ đúng tên hiển thị trên Zalo.
+- **Nhóm Zalo** (`SCAN_GROUPS=auto`, mặc định): bot chỉ theo dõi **nhóm làm việc với khách**, tức nhóm mà nick shop
+  hoặc nhân viên đã nhắn trong 14 ngày gần đây. Nhóm CLB hay cộng đồng, nơi shop không nói gì, bot bỏ qua.
+  Trong nhóm, "khách" là người gửi tin, ví dụ "Anh Tuấn (nhóm Nhà anh Tuấn – tủ bếp)".
+  Đặt `SCAN_GROUPS=0` để bỏ qua mọi nhóm, `SCAN_GROUPS=1` để theo dõi tất cả.
+- Nhân viên gõ `Đơn: 1 tủ lavabo 80cm` trong nhóm của khách thì đơn được ghi theo tên nhóm.
+
 ### Họp với các bot và hỏi riêng từng bộ phận
 
 **Họp:** gõ tự do trong phòng điều phối hoặc trong chat riêng với một bot.

@@ -14,6 +14,7 @@
 #   REPORT_GROUP     tên nhóm Zalo nhận báo đơn (mặc định giữ giá trị cũ hoặc "Bot đơn hàng")
 #   ACCOUNT_NUMBER   số thứ tự tài khoản Zalo (mặc định 1 = tài khoản đang kết nối gần nhất)
 #   REPLACE_WEBHOOK  "c" để cho phép thay webhook đang trỏ chỗ khác
+#   STAFF_NAMES      tên Zalo nhân viên, cách nhau dấu phẩy
 #   TELEGRAM_TOKEN   token bot Telegram (từ @BotFather) – có token thì bot chỉ ĐỌC Zalo, báo qua Telegram
 set -euo pipefail
 
@@ -112,6 +113,10 @@ WRONG=$(sql "SELECT count(*) FROM messages m JOIN conversations c ON c.id = m.co
 if [ "${WRONG:-0}" -gt 0 ] 2>/dev/null; then
   echo "Phát hiện $WRONG tin shop gửi trong 7 ngày bị ZaloCRM ghi nhầm là tin khách – bot sẽ tự nhận ra đúng."
 fi
+CUR_STAFF=$(env_get ORDER_BOT_STAFF_NAMES)
+echo "Nhân viên shop: tin của họ trong nhóm được tính là shop trả lời, không bị coi là khách."
+STAFF=$(ask "Tên Zalo nhân viên, cách nhau dấu phẩy (Enter = ${CUR_STAFF:-bỏ qua, thêm sau bằng /nhanvien}): " \
+            STAFF_NAMES "$CUR_STAFF")
 
 say "Nhận thông báo qua Telegram"
 CUR_TG=$(env_get ORDER_BOT_TELEGRAM_TOKEN)
@@ -177,6 +182,7 @@ env_set ORDER_BOT_API_KEY "$API_KEY"
 env_set ORDER_BOT_WEBHOOK_SECRET "$SECRET"
 env_set ORDER_BOT_ACCOUNT_ID "$ACCOUNT_ID"
 env_set ORDER_BOT_SHOP_NAMES "$SHOP_NAMES"
+env_set ORDER_BOT_STAFF_NAMES "$STAFF"
 env_set ORDER_BOT_SHOP_UIDS "$SHOP_UIDS"
 grep -qE "^ORDER_BOT_REPLY_MINUTES=" .env || env_set ORDER_BOT_REPLY_MINUTES "15"
 grep -qE "^ORDER_BOT_WORK_HOURS=" .env || env_set ORDER_BOT_WORK_HOURS "07:00-21:00"

@@ -65,6 +65,10 @@ CREATE TABLE IF NOT EXISTS conv_state (       -- theo dõi khách chờ shop tr�
     last_shop_at TEXT,
     remind_level INTEGER NOT NULL DEFAULT 0    -- đã nhắc mấy lần cho lượt chờ này
 );
+CREATE TABLE IF NOT EXISTS known_convs (       -- cuộc trò chuyện bot đã biết (để nhận ra khách mới / nhóm mới)
+    conv_key TEXT PRIMARY KEY,
+    first_seen TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -389,6 +393,15 @@ class Store:
     def set_remind_level(self, conv_ids: list[str], level: int):
         self.conn.executemany("UPDATE conv_state SET remind_level=? WHERE conv_id=?", [(level, c) for c in conv_ids])
         self.conn.commit()
+
+    # ---------- cuộc trò chuyện đã biết ----------
+    def mark_known(self, keys: list[str]) -> int:
+        """Ghi nhận; trả về số cuộc trò chuyện MỚI được ghi."""
+        before = self.conn.execute("SELECT COUNT(*) n FROM known_convs").fetchone()["n"]
+        self.conn.executemany("INSERT OR IGNORE INTO known_convs(conv_key, first_seen) VALUES (?,?)",
+                              [(k, now_iso()) for k in keys])
+        self.conn.commit()
+        return self.conn.execute("SELECT COUNT(*) n FROM known_convs").fetchone()["n"] - before
 
     # ---------- cài đặt ----------
     def get_setting(self, key: str, default: str = "") -> str:

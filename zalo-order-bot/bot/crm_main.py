@@ -26,6 +26,7 @@ Biến môi trường:
   PAIR_CODE               mã ghép nối: gõ "/batdau <mã>" cho bot Telegram để nhận thông báo
   ANTHROPIC_API_KEY       (tùy chọn) tự nhận đơn từ tin nhắn khách viết tự do
 """
+import hashlib
 import json
 import logging
 import os
@@ -45,6 +46,7 @@ from .parser import looks_like_order, parse_command, parse_order
 from .dept_bots import ALLOWED, BOT_NAMES, DIEUPHOI, FREE_TEXT_ORDERS, dept_help, not_allowed
 from .departments import DEPTS, ROOM, TONG, dept_icon, dept_list, dept_name, parse_dept, route
 from .ai_assistant import ask_bot, parse_address
+from . import groups
 from .followup import dissatisfied, in_work_hours, needs_reply, parse_ts, short, utc_now, wait_text, waiting_lines
 from .meeting import COMPANY, build_meeting, flatten, parse_meeting
 from .reports import full_report, lead_line, report_leads
@@ -153,6 +155,13 @@ class CRMBot:
         if not conv:
             log.warning("Bỏ qua: API ZaloCRM không trả về cuộc trò chuyện %s", data.get("conversationId"))
             return
+        if conv.get("threadType") == "group" and data.get("sentAt") and conv.get("externalThreadId"):
+            # Cùng 1 nhóm Zalo có 2 nick shop -> ZaloCRM ghi 2 lần; chỉ xử lý 1 lần
+            digest = hashlib.sha1(text.encode()).hexdigest()[:12]
+            dup = f"grpmsg:{conv['externalThreadId']}:{norm(data.get('senderName') or '')}:{data['sentAt']}:{digest}"
+            if not self.store.mark_seen(dup):
+                return
+        self.notice_new_conversation(conv, text, is_self)
         report = self.report_conv()
         contact = conv.get("contact") or {}
         name, phone = contact.get("fullName") or "", contact.get("phone") or ""
@@ -177,10 +186,10 @@ class CRMBot:
                                        default_customer=chat_title, phone=phone)
                 if reply:
                     if reply.startswith("✅ Đã ghi đơn"):
-                        self.store.close_leads(conv_id=conv["id"])  # đã lên đơn -> tin khách coi như xong
+                        self.store.close_leads(conv_id=self.key(conv))  # đã lên đơn -> tin khách coi như xong
                     reply = f"[chat với {chat_title}]\n{reply}"
             elif not parse_command(text) and self.chat_tracked(conv):
-                reply, target, lead_id = self._customer_message(text, conv["id"], name, phone)
+                reply, target, lead_id = self._customer_message(text, self.key(conv), name, phone)
             else:
                 reply = None
         if reply and target and self.room_key():
@@ -308,6 +317,16 @@ class CRMBot:
         key = norm(sender_name or "")
         return bool(key) and (key in self.shop_names or key in self.staff_names())
 
+    @staticmethod
+    def key(conv: dict) -> str:
+        """Mã theo dõi 1 cuộc trò chuyện. Nhóm: theo mã nhóm Zalo (gộp khi 2 nick shop cùng ở trong nhóm)."""
+        if conv.get("threadType") == "group" and conv.get("externalThreadId"):
+            return f"grp:{conv['externalThreadId']}"
+        return conv["id"]
+
+    def group_class(self, group_name: str) -> str | None:
+        return groups.class_of(self.store, group_name)
+
     def group_ok(self, conv_id: str) -> bool:
         if self.scan_groups == "1":
             return True
@@ -326,15 +345,90 @@ class CRMBot:
         return bool(key) and any(key == m or key.endswith(f"nhom {m}") for m in self.muted())
 
     def chat_tracked(self, conv: dict) -> bool:
-        """Chat riêng: luôn theo dõi (trừ chat đã /boqua). Nhóm: theo chế độ SCAN_GROUPS."""
-        if self.is_muted_name((conv.get("contact") or {}).get("fullName") or ""):
+        """Chat riêng: luôn theo dõi (trừ chat đã /boqua). Nhóm: theo loại đã xếp (/nhom),
+        chưa xếp thì theo chế độ SCAN_GROUPS."""
+        title = (conv.get("contact") or {}).get("fullName") or ""
+        if self.is_muted_name(title):
             return False
-        return conv.get("threadType") != "group" or self.group_ok(conv["id"])
+        if conv.get("threadType") != "group":
+            return True
+        cls = self.group_class(title)
+        if cls:
+            return cls == "khach"
+        return self.group_ok(self.key(conv))
 
     def waiting_rows(self):
-        return [r for r in self.store.waiting_convs(include_groups=True)
-                if (r["thread_type"] != "group" or self.group_ok(r["conv_id"]))
-                and not self.is_muted_name(r["customer"])]
+        rows = []
+        for r in self.store.waiting_convs(include_groups=True):
+            if self.is_muted_name(r["customer"]):
+                continue
+            if r["thread_type"] == "group":
+                cls = self.group_class(groups.group_name_from_customer(r["customer"]))
+                if cls != "khach" and (cls or not self.group_ok(r["conv_id"])):
+                    continue
+            rows.append(r)
+        return rows
+
+    # ---------- Xếp loại nhóm, khách mới / nhóm mới ----------
+    def group_command(self, args: str) -> str:
+        convs = groups.unique_groups(self.crm.refresh_conversations())
+        if not args.strip():
+            text, names = groups.listing(self.store, convs)
+            self.store.set_setting("nhom_list", "\n".join(names))
+            return text
+        cls, tokens = groups.parse_args(args)
+        if not cls or not tokens:
+            return "Cú pháp: /nhom khach 7, 8 · /nhom noibo 1, 4 · /nhom boqua 3 · /nhom xoa 5 (gõ /nhom để xem số)"
+        numbered = [n for n in self.store.get_setting("nhom_list").split("\n") if n]
+        all_names = [(c.get("contact") or {}).get("fullName") or "" for c in convs]
+        found, missing = groups.resolve(tokens, numbered, all_names)
+        # Tên đầy đủ của nhóm chưa có trong ZaloCRM: vẫn ghi nhớ, nhóm xuất hiện sau sẽ áp dụng luôn
+        ahead = [t for t in missing if not t.isdigit() and len(norm(t)) >= 4 and cls != "xoa"]
+        missing = [t for t in missing if t not in ahead]
+        found += ahead
+        mapping = groups.load(self.store)
+        for name in found:
+            if cls == "xoa":
+                mapping.pop(norm(name), None)
+            else:
+                mapping[norm(name)] = cls
+        groups.save(self.store, mapping)
+        label = "Bỏ xếp loại" if cls == "xoa" else f"{groups.CLASSES[cls][0]} {groups.CLASSES[cls][1]}"
+        out = [f"✅ {label}: " + (", ".join(found) if found else "(không có nhóm nào)")]
+        if ahead:
+            out.append("ℹ️ Chưa thấy trong ZaloCRM (em vẫn ghi nhớ, nhóm xuất hiện sẽ áp dụng): " + ", ".join(ahead))
+        if missing:
+            out.append("❓ Không tìm thấy: " + ", ".join(missing) + " – gõ /nhom để xem số thứ tự.")
+        text, names = groups.listing(self.store, convs)
+        self.store.set_setting("nhom_list", "\n".join(names))
+        return "\n".join(out) + "\n\n" + text
+
+    def bootstrap_known(self, convs: list[dict]):
+        """Lần đầu: ghi nhận mọi cuộc trò chuyện đang có (không báo), từ đó mới báo khách/nhóm MỚI."""
+        if not self.store.get_setting("known_bootstrap"):
+            self.store.mark_known([self.key(c) for c in convs])
+            self.store.set_setting("known_bootstrap", "1")
+
+    def notice_new_conversation(self, conv: dict, text: str, is_self: bool):
+        """Cuộc trò chuyện lần đầu xuất hiện + khách/nhóm mới tạo trong ZaloCRM -> báo anh."""
+        if not self.store.get_setting("known_bootstrap") or not self.store.mark_known([self.key(conv)]):
+            return
+        contact = conv.get("contact") or {}
+        title = contact.get("fullName") or "?"
+        if self.is_muted_name(title) or self.group_class(title) in ("noibo", "boqua"):
+            return
+        detail = self.crm.contact(contact["id"]) if contact.get("id") else None
+        created = (detail or {}).get("createdAt")
+        if not created or (utc_now() - parse_ts(created)).days >= 3:
+            return  # khách/nhóm cũ (chỉ là lâu không nhắn) – không báo
+        if conv.get("threadType") == "group":
+            self.send_report(f"🆕 NHÓM MỚI: {title}\nNhóm này dùng để làm gì? Anh xếp loại giúp em:\n"
+                             f"  /nhom khach {title}\n  /nhom noibo {title}\n  /nhom boqua {title}")
+        else:
+            who = title + (f" ({contact['phone']})" if contact.get("phone") else "")
+            first = "Shop vừa bắt đầu nhắn" if is_self else "Nhắn lần đầu"
+            self.send_report(f"🆕 KHÁCH MỚI: {who}\n{first}: “{short(text, 150)}”" if text
+                             else f"🆕 KHÁCH MỚI: {who}")
 
     def name_list_command(self, setting: str, args: str, title: str, usage: str) -> str:
         """Quản lý 1 danh sách tên: (trống) xem · them A, B · xoa A. Lưu tên hiển thị + bản không dấu."""
@@ -365,8 +459,12 @@ class CRMBot:
         since = utc_now() - timedelta(days=days)
         convs = [c for c in self.crm.refresh_conversations()
                  if c.get("lastMessageAt") and parse_ts(c["lastMessageAt"]) >= since]
-        n_msg, new_leads, waiting_ids = 0, [], []
+        n_msg, new_leads, waiting_ids, done = 0, [], [], set()
         for conv in convs:
+            k = self.key(conv)
+            if k in done:
+                continue  # cùng 1 nhóm thấy từ 2 nick shop: chỉ quét 1 lần
+            done.add(k)
             contact = conv.get("contact") or {}
             title, phone = contact.get("fullName") or "", contact.get("phone") or ""
             group = conv.get("threadType") == "group"
@@ -379,23 +477,23 @@ class CRMBot:
                 n_msg += 1
                 text = (m.get("content") or "").strip() if m.get("contentType") in (None, "", "text") else ""
                 if m.get("senderType") == "self" or self.is_shop_person(m.get("senderName")):
-                    self.store.shop_said(conv["id"], at.isoformat())
+                    self.store.shop_said(k, at.isoformat())
                     pending.clear()  # shop đã trả lời: các tin trước coi như đã được tiếp nhận
                     continue
                 if not text:
                     continue
                 who = f"{m.get('senderName') or 'Khách'} (nhóm {title or '?'})" if group else (title or "Khách")
-                self.store.customer_said(conv["id"], who, "" if group else phone, conv.get("threadType") or "user",
+                self.store.customer_said(k, who, "" if group else phone, conv.get("threadType") or "user",
                                          at.isoformat(), text, needs_reply(text))
                 dept = route(text)
                 if dept and dept not in pending:
                     pending[dept] = (who, text, at)
-            state = self.store.get_conv_state(conv["id"])
+            state = self.store.get_conv_state(k)
             if not (state and state["waiting"]) or not self.chat_tracked(conv):
                 continue
-            waiting_ids.append(conv["id"])
+            waiting_ids.append(k)
             for dept, (who, text, at) in pending.items():
-                lead_id, is_new = self.store.add_lead(conv["id"], who, "" if group else phone, dept, text,
+                lead_id, is_new = self.store.add_lead(k, who, "" if group else phone, dept, text,
                                                       now=at.astimezone().replace(tzinfo=None))
                 if is_new:
                     new_leads.append((lead_id, dept))
@@ -446,11 +544,11 @@ class CRMBot:
         thread = conv.get("threadType") or "user"
         at = parse_ts(data.get("sentAt")).isoformat()
         if is_self:
-            self.store.shop_said(conv["id"], at)
+            self.store.shop_said(self.key(conv), at)
             return
         if not text:
             return  # khách gửi sticker/ảnh: không tính là câu hỏi cần trả lời
-        prev = self.store.customer_said(conv["id"], name or "Khách", phone, thread, at, text, needs_reply(text))
+        prev = self.store.customer_said(self.key(conv), name or "Khách", phone, thread, at, text, needs_reply(text))
         if (dissatisfied(text) and prev is not None and prev["last_shop_at"]
                 and self.chat_tracked(conv)):
             who = (name or "Khách") + (f" ({phone})" if phone else "")
@@ -583,6 +681,7 @@ class CRMBot:
     def poll_once(self) -> int:
         """Lấy tin nhắn mới qua API công khai và xử lý như webhook. Trả về số tin mới."""
         convs = self.crm.refresh_conversations()
+        self.bootstrap_known(convs)
         stamps = [c["lastMessageAt"] for c in convs if c.get("lastMessageAt")]
         cursor = self.store.get_setting("poll_cursor")
         if not cursor:  # lần đầu: chỉ xử lý tin đến sau thời điểm này, không quét lại lịch sử
@@ -698,6 +797,8 @@ class CRMBot:
             return self.unanswered_text()
         if cmd and cmd.name == "nhanvien":
             return self.staff_command(cmd.args)
+        if cmd and cmd.name == "nhom":
+            return self.group_command(cmd.args)
         if cmd and cmd.name == "boqua":
             return self.name_list_command(
                 "muted_names", cmd.args, "🔕 KHÔNG QUÉT các chat này (gia đình, bạn bè…):",

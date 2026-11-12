@@ -108,6 +108,20 @@ Zalo của shop** (`ORDER_BOT_SHOP_NAMES`), nhờ đó bot vẫn nhận ra đó 
 Giới hạn: API của ZaloCRM chỉ trả về **100 cuộc trò chuyện gần nhất**, nên `/quetlai` chỉ xem được 100 chat mới
 nhất. Tin mới thì bot vẫn bắt đủ, vì chat vừa có tin luôn nằm đầu danh sách.
 
+### Xếp loại nhóm Zalo, khách mới, nhóm mới
+
+- `/nhom`: xem các nhóm Zalo kèm số thứ tự và loại. Nhóm có cả 2 nick shop ở trong chỉ hiện một lần.
+- `/nhom khach 7, 8` · `/nhom noibo 1, 4` · `/nhom boqua 3` · `/nhom xoa 5`: xếp loại theo số thứ tự hoặc theo tên
+  nhóm. Gõ phần đầu tên cũng được.
+  - 🏠 **khách**: luôn theo dõi (báo việc, nhắc trả lời), không phụ thuộc `SCAN_GROUPS`.
+  - 👥 **nội bộ** và 🔕 **bỏ qua**: bot không đọc.
+  - Nhóm chưa xếp loại thì bot xử lý theo `SCAN_GROUPS`.
+- 🆕 **Khách mới**: người lần đầu nhắn shop (ZaloCRM thấy họ trong 3 ngày gần đây). Bot báo tên, SĐT và tin đầu tiên.
+- 🆕 **Nhóm mới**: shop vừa vào một nhóm. Bot báo kèm sẵn 3 lệnh xếp loại để anh bấm.
+- Khách cũ lâu không nhắn rồi quay lại thì bot không báo là khách mới. Lần đầu chạy, bot ghi nhận mọi cuộc trò chuyện
+  đang có mà không báo gì.
+- Một nhóm có 2 nick shop ở trong thì ZaloCRM ghi mỗi tin 2 lần; bot gộp lại nên chỉ báo một lần.
+
 ### Họp với các bot và hỏi riêng từng bộ phận
 
 **Họp:** gõ tự do trong phòng điều phối hoặc trong chat riêng với một bot.

@@ -22,6 +22,7 @@ HELP = """🤖 BOT ĐƠN HÀNG – hướng dẫn
 
 💬 /chuatraloi – khách đang chờ anh trả lời
 👥 /nhanvien – danh sách nhân viên shop (tin của họ không bị coi là khách)
+📂 /nhom – xếp loại nhóm Zalo (khách / nội bộ / bỏ qua)
 🔎 /quetlai 7 – quét lại tin 7 ngày qua tìm khách bị bỏ quên · 🔕 /boqua Tên – không quét chat gia đình/bạn bè
 🔔 Tin khách: /choxuly – việc chưa xử lý | /xong K5 – đã xử lý
 ↪️ /chuyen K5 kho – chuyển việc sang bộ phận khác (sale, ketoan, kho, kythuat) | /bophan – chat này thuộc bộ phận nào

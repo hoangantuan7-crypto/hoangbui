@@ -54,6 +54,13 @@ class ZaloCRM:
         path = f"/api/public/conversations/{urllib.parse.quote(conversation_id)}/messages"
         return self._request("GET", path, query={"limit": limit}).get("messages", [])
 
+    def contact(self, contact_id: str) -> dict | None:
+        """Chi tiết khách (có createdAt = lúc ZaloCRM thấy khách lần đầu)."""
+        try:
+            return self._request("GET", f"/api/public/contacts/{urllib.parse.quote(contact_id)}")
+        except Exception:  # noqa: BLE001
+            return None
+
     def conversation(self, conversation_id: str) -> dict | None:
         if conversation_id not in self._conv_cache or time.time() - self._cache_at > 600:
             self.refresh_conversations()

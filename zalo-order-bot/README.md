@@ -108,6 +108,17 @@ Zalo của shop** (`ORDER_BOT_SHOP_NAMES`), nhờ đó bot vẫn nhận ra đó 
 Giới hạn: API của ZaloCRM chỉ trả về **100 cuộc trò chuyện gần nhất**, nên `/quetlai` chỉ xem được 100 chat mới
 nhất. Tin mới thì bot vẫn bắt đủ, vì chat vừa có tin luôn nằm đầu danh sách.
 
+### 3 mức thông báo
+
+Telegram không cho bot đổi màu chữ, nên thông báo tự động có biểu tượng màu ở đầu:
+
+- 🔴 **Đỏ – cần xử lý ngay**: khách chưa được giải đáp đúng, khách chờ trả lời, việc quá hạn, nhắc lần 2,
+  bot không đọc được Zalo hoặc ảnh. Tiêu đề in đậm, nội dung trong khung, **có chuông báo**.
+- 🟡 **Vàng – việc mới**: việc mới giao cho bộ phận, khách mới / nhóm mới, ghi lịch, nhắc trước giờ hẹn. Tiêu đề đậm.
+- 🟢 **Xanh – để biết**: báo cáo, họp, lịch hôm nay, việc đã xong. Gửi **im lặng** (không rung, không chuông).
+
+Câu trả lời khi anh gõ lệnh giữ nguyên chữ thường. Gõ liền mã cũng được: `/xongk6` = `/xong K6`, `/xem12` = `/xem 12`.
+
 ### Xếp loại nhóm Zalo, khách mới, nhóm mới
 
 - `/nhom`: xem các nhóm Zalo kèm số thứ tự và loại. Nhóm có cả 2 nick shop ở trong chỉ hiện một lần.

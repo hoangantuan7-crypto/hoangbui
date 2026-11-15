@@ -119,8 +119,14 @@ def parse_command(message: str) -> Command | None:
     if not m:
         return None
     raw = m.group(1).split("@")[0]
+    args = m.group(2).strip()
     name = COMMAND_ALIASES.get(raw.lower()) or COMMAND_ALIASES.get(norm(raw).replace(" ", ""))
-    return Command(name, m.group(2).strip()) if name else None
+    if not name:  # gõ liền mã: "/xongk6", "/xem12", "/chuyenk5 kho", "/lichxongl3" -> tách lệnh và mã
+        glued = re.match(r"^(\D+?)([kKlL#]?\d+)$", raw)
+        name = glued and COMMAND_ALIASES.get(glued.group(1).lower())
+        if name:
+            args = f"{glued.group(2)} {args}".strip()
+    return Command(name, args) if name else None
 
 
 def parse_product_qty(args: str) -> tuple[str, float] | None:

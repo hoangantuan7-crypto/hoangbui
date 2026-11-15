@@ -10,7 +10,7 @@ class FakeTG:
     def __init__(self, username, fail_group=False):
         self.username, self.sent, self.fail_group = username, [], fail_group
 
-    def send(self, chat_id, text):
+    def send(self, chat_id, text, level=None):
         if self.fail_group and str(chat_id).startswith("-"):
             raise RuntimeError("Forbidden: bot is not a member of the group chat")
         self.sent.append((str(chat_id), text))

@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import urllib.parse
 import urllib.request
 
 from .text import norm
@@ -96,6 +97,19 @@ def is_complete(c: dict) -> bool:
 
 
 # ---------- ảnh ----------
+def image_links(content: str) -> list[str]:
+    """Mọi link ảnh có trong tin (ảnh gốc trước, ảnh thu nhỏ sau) – dùng khi link đầu tải không được."""
+    try:
+        data = json.loads(content or "")
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    keys = ("href", "hdUrl", "normalUrl", "url", "thumb", "thumbUrl")
+    return [str(data[k]) for k in keys if isinstance(data.get(k), str)
+            and str(data[k]).startswith(("http://", "https://", "/"))]
+
+
 def image_url(content: str) -> tuple[str, str]:
     """Link ảnh + chú thích từ nội dung tin ảnh của ZaloCRM ({"href": …, "title": …})."""
     try:
@@ -104,13 +118,26 @@ def image_url(content: str) -> tuple[str, str]:
         data = {}
     if not isinstance(data, dict):
         return "", ""
-    url = data.get("href") or data.get("hdUrl") or data.get("normalUrl") or data.get("thumb") or ""
+    links = image_links(content)
     caption = data.get("title") or data.get("description") or ""
-    return (url if str(url).startswith(("http://", "https://")) else ""), str(caption or "")
+    return (links[0] if links else ""), str(caption or "")
 
 
-def download(url: str) -> tuple[bytes, str]:
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "app", "zalo-crm-app"}
+
+
+def candidate_urls(url: str, crm_base: str) -> list[str]:
+    """ZaloCRM tự lưu ảnh (Kho ảnh) và đưa link kiểu http://localhost:3080/… hoặc /files/…:
+    trong container bot, "localhost" là chính bot -> đổi sang địa chỉ ZaloCRM nội bộ (vd http://app:3000)."""
+    p = urllib.parse.urlparse(url)
+    if crm_base and (not p.netloc or (p.hostname or "") in LOCAL_HOSTS):
+        local = crm_base.rstrip("/") + (p.path or "/") + (f"?{p.query}" if p.query else "")
+        return [local] + ([url] if p.netloc else [])
+    return [url]
+
+
+def download(url: str, headers: dict | None = None) -> tuple[bytes, str]:
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", **(headers or {})})
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = resp.read(MAX_IMAGE_BYTES + 1)
         ctype = (resp.headers.get("Content-Type") or "image/jpeg").split(";")[0].strip()

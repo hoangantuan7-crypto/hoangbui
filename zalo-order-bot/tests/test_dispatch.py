@@ -11,7 +11,7 @@ class FakeTG:
     def __init__(self):
         self.sent = []
 
-    def send(self, chat_id, text):
+    def send(self, chat_id, text, level=None):
         self.sent.append((chat_id, text))
 
     def to(self, chat_id):

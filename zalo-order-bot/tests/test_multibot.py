@@ -10,7 +10,7 @@ class FakeTG:
     def __init__(self, name):
         self.name, self.sent = name, []
 
-    def send(self, chat_id, text):
+    def send(self, chat_id, text, level=None):
         self.sent.append((chat_id, text))
 
 

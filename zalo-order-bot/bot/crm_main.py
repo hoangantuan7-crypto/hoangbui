@@ -59,7 +59,7 @@ from .meeting import COMPANY, build_meeting, flatten, parse_meeting
 from .reports import full_report, lead_line, report_leads
 from .text import norm
 from .zalo import split_text
-from .telegram import Telegram, pairing_reply
+from .telegram import XANH, Telegram, alert_level, pairing_reply
 from .zalocrm import ZaloCRM, verify_signature
 
 log = logging.getLogger("zalocrm-bot")
@@ -280,7 +280,8 @@ class CRMBot:
         if own_bot:
             icon, title = BOT_NAMES[dept]
             try:
-                self.bots[dept].send(group_id, f"{icon} {title}: Đã nhận việc K{lead_id}. Xử lý xong gõ /xong K{lead_id}")
+                self.bots[dept].send(group_id, f"{icon} {title}: Đã nhận việc K{lead_id}. Xử lý xong gõ /xong K{lead_id}",
+                                     level=XANH)
             except Exception:  # noqa: BLE001
                 log.exception("%s không nhắn được vào phòng điều phối", title)
                 self.report_problem(f"⚠️ {title} không nhắn được vào phòng điều phối – anh thêm {title} vào nhóm "
@@ -824,13 +825,14 @@ class CRMBot:
     def _speak(self, botname: str, group_id: str, text: str):
         """1 bot lên tiếng trong nhóm; bot đó chưa có hoặc chưa vào nhóm thì Bot Điều phối nói thay."""
         bot = self.bots.get(botname)
+        level = alert_level(text)
         if bot is not None and botname != DIEUPHOI:
             try:
-                bot.send(group_id, text)
+                bot.send(group_id, text, level=level)
                 return
             except Exception:  # noqa: BLE001
                 log.warning("%s chưa nhắn được vào nhóm, Bot Điều phối nói thay", BOT_NAMES[botname][1])
-        self.bots[DIEUPHOI].send(group_id, text)
+        self.bots[DIEUPHOI].send(group_id, text, level=level)
 
     def run_meeting(self, scope: str, dept: str | None, chat_key: str, auto: bool = False) -> str | None:
         """Họp trong nhóm: từng bot lần lượt báo cáo bằng chính tên mình.
@@ -882,7 +884,7 @@ class CRMBot:
         botname, _, chat_id = key.partition(":")
         bot = self.bots.get(botname) or self.bots.get(DIEUPHOI)
         try:
-            bot.send(chat_id, text)
+            bot.send(chat_id, text, level=alert_level(text))  # thông báo chủ động: 🔴 / 🟡 / 🟢
         except Exception:  # noqa: BLE001 - 1 chat lỗi không chặn chat khác
             log.exception("Gửi Telegram (%s) thất bại", botname)
 

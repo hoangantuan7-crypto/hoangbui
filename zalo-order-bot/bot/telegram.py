@@ -4,6 +4,7 @@ Bảo mật: bot Telegram ai cũng tìm được, nên chỉ những chat đã g
 (/batdau <mã>) mới nhận thông báo và dùng được lệnh.
 """
 import hmac
+import html
 import json
 import logging
 import re
@@ -33,6 +34,39 @@ def split_text(text: str, limit: int = MAX_TEXT) -> list[str]:
     return chunks
 
 
+# 3 mức thông báo (Telegram không cho bot đổi màu chữ -> dùng biểu tượng màu + chữ đậm + khung trích dẫn)
+DO, VANG, XANH = "do", "vang", "xanh"
+ICONS = {DO: "🔴", VANG: "🟡", XANH: "🟢"}
+RED_WORDS = ("CHƯA ĐƯỢC GIẢI ĐÁP", "KHÁCH ĐANG CHỜ ANH TRẢ LỜI", "NHẮC LẦN 2", "CHƯA XỬ LÝ (quá",
+             "không đọc được tin Zalo", "không nhắn được", "không đọc được số điện thoại", "Không tải/đọc được")
+YELLOW_STARTS = ("🧭 Giao việc", "📅 GHI LỊCH", "⏰", "🔔", "🆕", "↪️", "📇")
+
+
+def alert_level(text: str) -> str:
+    """🔴 khách gặp vấn đề / việc quá hạn / bot lỗi · 🟡 việc mới, lịch hẹn, nhắc trước · 🟢 báo cáo, đã xong."""
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    head = lines[0] if lines else ""
+    if (head.startswith(("⚠️", "❌", "⛔")) or any(w in head for w in RED_WORDS)
+            or any(ln.startswith("❌") for ln in lines)):
+        return DO
+    if head.startswith(YELLOW_STARTS) or re.search(r"– K\d+$", head):
+        return VANG
+    return XANH
+
+
+def format_alert(text: str, level: str, first: bool = True) -> str:
+    """Tin thường -> HTML theo mức: 🔴 tiêu đề đậm + nội dung trong khung · 🟡 tiêu đề đậm · 🟢 giữ nguyên."""
+    lines = text.split("\n")
+    head, body = (lines[0], "\n".join(lines[1:]).strip("\n")) if first else ("", text)
+    out = []
+    if head:
+        title = html.escape(head)
+        out.append(f"{ICONS[level]} <b>{title}</b>" if level in (DO, VANG) else f"{ICONS[level]} {title}")
+    if body:
+        out.append(f"<blockquote>{html.escape(body)}</blockquote>" if level == DO else html.escape(body))
+    return "\n".join(out)
+
+
 class Telegram:
     def __init__(self, token: str, base: str = "https://api.telegram.org"):
         self.url = f"{base.rstrip('/')}/bot{token}"
@@ -50,9 +84,21 @@ class Telegram:
             raise RuntimeError(f"Telegram {method}: {data.get('description')}")
         return data.get("result")
 
-    def send(self, chat_id: str, text: str):
-        for chunk in split_text(text):
-            self.call("sendMessage", {"chat_id": chat_id, "text": chunk, "disable_web_page_preview": True})
+    def send(self, chat_id: str, text: str, level: str | None = None):
+        """level=None: tin thường (trả lời lệnh). level=do/vang/xanh: thông báo có màu; xanh gửi im lặng."""
+        for i, chunk in enumerate(split_text(text, 3500 if level else MAX_TEXT)):
+            payload = {"chat_id": chat_id, "text": chunk, "disable_web_page_preview": True}
+            if level:
+                payload.update(text=format_alert(chunk, level, first=i == 0), parse_mode="HTML",
+                               disable_notification=level == XANH)  # 🟢 không rung/không chuông
+            try:
+                self.call("sendMessage", payload)
+            except RuntimeError as e:
+                if not level or "parse" not in str(e).lower():
+                    raise
+                log.warning("Telegram không nhận định dạng, gửi lại chữ thường: %s", e)
+                self.call("sendMessage", {"chat_id": chat_id, "text": f"{ICONS[level]} {chunk}",
+                                          "disable_web_page_preview": True})
 
     def get_updates(self, offset: int, timeout: int = 30) -> list[dict]:
         return self.call("getUpdates", {"offset": offset, "timeout": timeout,

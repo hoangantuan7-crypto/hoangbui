@@ -122,6 +122,26 @@ nhất. Tin mới thì bot vẫn bắt đủ, vì chat vừa có tin luôn nằm
   đang có mà không báo gì.
 - Một nhóm có 2 nick shop ở trong thì ZaloCRM ghi mỗi tin 2 lần; bot gộp lại nên chỉ báo một lần.
 
+### Nhóm "THÔNG TIN KHÁCH HÀNG" → Google Sheet
+
+Lập một nhóm Zalo tên bắt đầu bằng **THÔNG TIN KHÁCH HÀNG**, có nick shop đang kết nối ZaloCRM ở trong. Bot tự nhận
+ra nhóm này theo tên; với nhóm tên khác thì dùng `/nhom thongtin <tên nhóm>`.
+
+Gửi vào nhóm:
+- **Ảnh** chụp màn hình, phiếu in hoặc giấy viết tay. Một ảnh có nhiều khách (bảng có cột STT) thì mỗi khách thành
+  một dòng.
+  - Có `ANTHROPIC_API_KEY`: Claude Haiku đọc ảnh, đọc được cả chữ viết tay. Ước tính vài đồng một ảnh.
+  - Không có khóa: đọc chữ miễn phí bằng Tesseract, tốt với ảnh chụp màn hình và phiếu in.
+- **Tin gõ tay**: `KH: Chị Lan | 0912345678 | Diễn Châu | tủ lavabo 80`, hoặc nhiều dòng `Tên: …`, `SĐT: …`, `Địa chỉ: …`.
+
+Bot ghi vào Google Sheet các cột: STT · Ngày thêm · Tên · SĐT · Địa chỉ · Ghi chú · Người gửi · Nguồn · Trạng thái
+· Link ảnh gốc · Mã tin. Trùng SĐT thì bot không thêm và báo dòng đã có. Đọc không chắc thì bot ghi
+**"Cần kiểm tra"**. Mọi kết quả được báo qua Telegram (Bot Sale). Bot không nhắn gì vào nhóm Zalo.
+
+Cài đặt Sheet: mở Sheet, vào **Tiện ích mở rộng → Apps Script**, dán file `google-sheet/AppsScript.gs`, đổi `TOKEN`
+thành mã bí mật của anh. Sau đó chọn **Triển khai → Ứng dụng web** (Thực thi: Tôi · Truy cập: Bất kỳ ai). Chạy lại
+script cài đặt, dán **URL ứng dụng web** và **mã bí mật** khi được hỏi.
+
 ### Họp với các bot và hỏi riêng từng bộ phận
 
 **Họp:** gõ tự do trong phòng điều phối hoặc trong chat riêng với một bot.

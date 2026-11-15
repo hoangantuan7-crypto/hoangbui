@@ -6,7 +6,7 @@ from unittest import mock
 
 from bot import crm_main
 from bot.crm_main import CRMBot
-from bot.customer_info import clean_phone, image_url, parse_text
+from bot.customer_info import SheetWriter, clean_phone, image_url, parse_text, plausible
 from bot.db import Store
 from test_groups import ShopCRM, grp, iso
 from test_room import BOSS, FakeTG
@@ -50,6 +50,39 @@ class ParseTest(unittest.TestCase):
         rows = parse_text("1. Chị Hoa 0901234567 Diễn Yên\n2_ Anh Bắc 0912111222 Lý Thành")
         self.assertEqual([r["name"] for r in rows], ["Chị Hoa", "Anh Bắc"])
         self.assertEqual(parse_text("ok mọi người nhé"), [])
+
+    def test_ocr_garbage_from_camera_photo_is_not_written(self):
+        # đúng chữ rác Tesseract đọc từ ảnh chụp giấy của anh (12:39) – có dấu | nên trước đây bị hiểu là 5 khách
+        garbage = ("=. . .. nền... . | | |\n=) | | hi ia\n1 \"số —. | |\n3 L on Cổa TẾ park Vie lace te ABTA | |\n"
+                   "\u201ca TỪ qi To luge + và A402SR. A01A4a2k | _")
+        self.assertTrue(parse_text(garbage))                 # đọc thô thì ra "khách"…
+        self.assertEqual(plausible(parse_text(garbage)), [])  # …nhưng không có SĐT hợp lệ nên không ghi
+
+    def test_plausible_keeps_real_rows_and_cleans_names(self):
+        rows = plausible(parse_text("1. Chị Hoa ~~ 0901234567 Diễn Yên\n2 =) 0912111222"))
+        self.assertEqual([(r["name"], r["phone"]) for r in rows], [("Chị Hoa", "0901234567"), ("", "0912111222")])
+
+    def test_sheet_values_starting_with_formula_chars_are_kept_as_text(self):
+        sent = {}
+
+        class Resp:
+            def __init__(self, body):
+                self.body = body
+            def read(self):
+                return b'{"ok": true, "stt": 1}'
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return False
+
+        def fake_urlopen(req, timeout=30):
+            sent.update(json.loads(req.data))
+            return Resp(req.data)
+
+        with mock.patch("urllib.request.urlopen", fake_urlopen):
+            SheetWriter("https://script.google.com/x/exec", "t").append({"name": "=. nền", "note": "+84 abc",
+                                                                           "address": "Diễn Châu"})
+        self.assertEqual((sent["name"], sent["note"], sent["address"]), ("'=. nền", "'+84 abc", "Diễn Châu"))
 
     def test_image_url(self):
         url, cap = image_url(json.dumps({"href": "https://f.zdn.vn/a.jpg", "title": "khách mới"}))
@@ -117,7 +150,8 @@ class InfoGroupTest(unittest.TestCase):
         with mock.patch.object(crm_main, "download", return_value=(b"x", "image/jpeg")), \
                 mock.patch.object(crm_main, "read_image", return_value=([], "Ảnh (OCR)")):
             self.bot.handle_event(ev(6, content, ctype="image"))
-        self.assertIn("không đọc được thông tin khách", self.dp.to(BOSS)[-1])
+        self.assertIn("không đọc được số điện thoại nên chưa ghi vào Sheet", self.dp.to(BOSS)[-1])
+        self.assertEqual(self.sheet.rows, [])
         self.assertIn("https://f.zdn.vn/mo.jpg", self.dp.to(BOSS)[-1])
 
     def test_without_sheet_configured(self):

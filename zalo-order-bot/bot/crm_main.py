@@ -398,8 +398,11 @@ class CRMBot:
                                  "sale")
                 return
             if not customers:
-                self.send_report(f"⚠️ Ảnh {sender} gửi vào nhóm THÔNG TIN KHÁCH HÀNG: em không đọc được thông tin khách "
-                                 f"(ảnh mờ hoặc chữ viết tay khó đọc). Anh xem và nhập tay giúp em: {image}", "sale")
+                hint = ("Ảnh chụp giấy/chữ viết tay cần bật AI (ANTHROPIC_API_KEY) mới đọc được."
+                        if source == "Ảnh (OCR)" else "Ảnh mờ hoặc không có thông tin khách.")
+                self.send_report(f"⚠️ Ảnh {sender} gửi vào nhóm THÔNG TIN KHÁCH HÀNG: em không đọc được số điện thoại "
+                                 f"nên chưa ghi vào Sheet. {hint}\nAnh có thể gõ tay vào nhóm: "
+                                 f"KH: Tên | SĐT | Địa chỉ | ghi chú\nẢnh: {image}", "sale")
                 return
         elif ctype in (None, "", "text") and text:
             customers, source = parse_text(text), "Gõ tay"
@@ -410,7 +413,8 @@ class CRMBot:
         when = parse_ts(data.get("sentAt")).astimezone().strftime("%d/%m/%Y %H:%M")
         lines = []
         for c in customers:
-            unclear = bool(c.get("unclear")) or not is_complete(c) or source == "Ảnh (OCR)" and not c.get("address")
+            # Đọc bằng OCR luôn có thể sai vài chữ số -> luôn để anh kiểm tra lại; AI/gõ tay thì theo độ đầy đủ
+            unclear = bool(c.get("unclear")) or not is_complete(c) or source == "Ảnh (OCR)"
             row = {"date": c.get("date") or when, "name": c.get("name", ""), "phone": c.get("phone", ""),
                    "address": c.get("address", ""), "note": c.get("note", ""), "sender": sender, "source": source,
                    "status": "Cần kiểm tra" if unclear else "Đủ thông tin", "image": image,

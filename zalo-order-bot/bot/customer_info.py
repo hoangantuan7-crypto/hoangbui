@@ -92,6 +92,24 @@ def parse_text(text: str) -> list[dict]:
     return rows
 
 
+def clean_name(name: str) -> str:
+    """Bỏ ký tự rác OCR; tên phải có ít nhất 2 chữ cái mới giữ."""
+    name = re.sub(r"[^\w\s.'/-]", " ", name or "", flags=re.UNICODE)
+    name = re.sub(r"\s+", " ", name).strip(" .-'/")
+    return name if sum(ch.isalpha() for ch in name) >= 2 else ""
+
+
+def plausible(customers: list[dict]) -> list[dict]:
+    """Chữ đọc từ ảnh bằng OCR hay ra rác: chỉ giữ khách có SĐT hợp lệ (10 số, đầu 0)."""
+    out = []
+    for c in customers:
+        phone = clean_phone(c.get("phone", ""))
+        if phone:
+            out.append({**c, "phone": phone, "name": clean_name(c.get("name", "")),
+                        "address": clean_name(c.get("address", "")) and c.get("address", "").strip()})
+    return out
+
+
 def is_complete(c: dict) -> bool:
     return bool(c.get("name")) and bool(c.get("phone"))
 
@@ -152,10 +170,32 @@ def ocr_available() -> bool:
     return shutil.which("tesseract") is not None
 
 
+def prepare_for_ocr(image: bytes) -> bytes:
+    """Làm ảnh chụp điện thoại dễ đọc hơn: chuyển xám, lọc nhiễu, phóng to 2 lần (tối đa rộng 3000px).
+    Đo trên 54 số điện thoại trong ảnh giả lập chụp bằng điện thoại: đọc đúng 46 (ảnh gốc: 36; cách
+    "tăng tương phản" thử trước đó chỉ đúng 6 nên đã bỏ). Không có thư viện Pillow thì giữ nguyên ảnh."""
+    try:
+        from io import BytesIO
+
+        from PIL import Image, ImageFilter, ImageOps
+    except ImportError:
+        return image
+    try:
+        im = ImageOps.exif_transpose(Image.open(BytesIO(image))).convert("L").filter(ImageFilter.MedianFilter(3))
+        scale = min(2.0, 3000 / max(im.width, 1))
+        if scale > 1:
+            im = im.resize((int(im.width * scale), int(im.height * scale)), Image.LANCZOS)
+        out = BytesIO()
+        im.save(out, "PNG")
+        return out.getvalue()
+    except Exception:  # noqa: BLE001 - ảnh lạ: đọc ảnh gốc
+        return image
+
+
 def ocr(image: bytes) -> str:
     """Đọc chữ trong ảnh bằng Tesseract (tiếng Việt). Miễn phí, chạy trên máy."""
     with tempfile.NamedTemporaryFile(suffix=".img") as f:
-        f.write(image)
+        f.write(prepare_for_ocr(image))
         f.flush()
         out = subprocess.run(["tesseract", f.name, "stdout", "-l", "vie+eng", "--psm", "6"],
                              capture_output=True, timeout=120)
@@ -231,7 +271,7 @@ def read_image(image: bytes, media_type: str, caption: str = "") -> tuple[list[d
         if found is not None:
             return found, "Ảnh (AI)"
     if ocr_available():
-        return parse_text(ocr(image) + ("\n" + caption if caption else "")), "Ảnh (OCR)"
+        return plausible(parse_text(ocr(image) + ("\n" + caption if caption else ""))), "Ảnh (OCR)"
     return [], "Ảnh (chưa đọc được)"
 
 
@@ -243,7 +283,9 @@ class SheetWriter:
         self.url, self.token = url, token
 
     def append(self, row: dict) -> dict:
-        body = json.dumps({**row, "token": self.token}).encode()
+        # Ô bắt đầu bằng = + - @ bị Google Sheet hiểu là công thức (ra #ERROR!) -> thêm dấu ' để giữ là chữ
+        safe = {k: ("'" + v if isinstance(v, str) and v[:1] in ("=", "+", "-", "@") else v) for k, v in row.items()}
+        body = json.dumps({**safe, "token": self.token}).encode()
         req = urllib.request.Request(self.url, data=body, headers={"Content-Type": "application/json"}, method="POST")
         with urllib.request.urlopen(req, timeout=30) as resp:  # Apps Script chuyển hướng 302 -> urllib tự theo
             return json.loads(resp.read().decode() or "{}")

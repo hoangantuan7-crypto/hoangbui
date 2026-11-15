@@ -23,6 +23,7 @@ HELP = """🤖 BOT ĐƠN HÀNG – hướng dẫn
 💬 /chuatraloi – khách đang chờ anh trả lời
 👥 /nhanvien – danh sách nhân viên shop (tin của họ không bị coi là khách)
 📂 /nhom – xếp loại nhóm Zalo (khách / công việc / nội bộ / bỏ qua)
+🧾 /nhapdon – nháp đơn từ nhóm Zalo "CHỐT ĐƠN" chờ duyệt (trả lời tin nháp để sửa, "ok" để lên Google Sheet)
 📅 /lich – lịch hẹn đọc từ nhóm nội bộ "công việc", nhắc trước giờ hẹn · /lich them kho mai 9h giao tủ chị Hiền
 🔎 /quetlai 7 – quét lại tin 7 ngày qua tìm khách bị bỏ quên · 🔕 /boqua Tên – không quét chat gia đình/bạn bè
 🔔 Tin khách: /choxuly – việc chưa xử lý | /xong K5 – đã xử lý

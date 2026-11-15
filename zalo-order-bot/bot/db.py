@@ -1,4 +1,5 @@
 """Lưu trữ đơn hàng, tồn kho bằng SQLite."""
+import json
 import sqlite3
 import threading
 from datetime import datetime, timedelta
@@ -80,6 +81,22 @@ CREATE TABLE IF NOT EXISTS schedules (        -- lịch hẹn đọc từ nhóm 
     created_at TEXT NOT NULL,
     remind_level INTEGER NOT NULL DEFAULT 0,   -- 1 = đã nhắc trước giờ, 2 = đã nhắc đúng giờ / đã báo trong lịch sáng
     status TEXT NOT NULL DEFAULT 'open'        -- open | done | deleted
+);
+CREATE TABLE IF NOT EXISTS drafts (           -- nháp đơn từ nhóm Zalo "CHỐT ĐƠN", chờ anh sửa và duyệt
+    id INTEGER PRIMARY KEY,
+    data TEXT NOT NULL,                        -- JSON nháp (khách, các món, tiền)
+    sender TEXT DEFAULT '',
+    image TEXT DEFAULT '',
+    msg_id TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'open',       -- open | saved | cancelled
+    order_code TEXT DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS draft_msgs (       -- tin Telegram hiện nháp -> trả lời tin đó là sửa nháp
+    chat_id TEXT NOT NULL,
+    msg_id TEXT NOT NULL,
+    draft_id INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, msg_id)
 );
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
@@ -414,6 +431,37 @@ class Store:
                               [(k, now_iso()) for k in keys])
         self.conn.commit()
         return self.conn.execute("SELECT COUNT(*) n FROM known_convs").fetchone()["n"] - before
+
+    # ---------- nháp đơn ----------
+    def add_draft(self, data: dict, sender: str = "", image: str = "", msg_id: str = "") -> int:
+        cur = self.conn.execute("INSERT INTO drafts(data, sender, image, msg_id, created_at) VALUES (?,?,?,?,?)",
+                                (json.dumps(data, ensure_ascii=False), sender, image, msg_id, now_iso()))
+        self.conn.commit()
+        return cur.lastrowid
+
+    def get_draft(self, draft_id: int):
+        row = self.conn.execute("SELECT * FROM drafts WHERE id=?", (draft_id,)).fetchone()
+        return (row, json.loads(row["data"])) if row else (None, None)
+
+    def save_draft(self, draft_id: int, data: dict | None = None, status: str | None = None, code: str = ""):
+        if data is not None:
+            self.conn.execute("UPDATE drafts SET data=? WHERE id=?", (json.dumps(data, ensure_ascii=False), draft_id))
+        if status:
+            self.conn.execute("UPDATE drafts SET status=?, order_code=? WHERE id=?", (status, code, draft_id))
+        self.conn.commit()
+
+    def link_draft_msg(self, chat_id: str, msg_id, draft_id: int):
+        self.conn.execute("INSERT OR REPLACE INTO draft_msgs(chat_id, msg_id, draft_id) VALUES (?,?,?)",
+                          (str(chat_id), str(msg_id), draft_id))
+        self.conn.commit()
+
+    def draft_for_msg(self, chat_id: str, msg_id) -> int | None:
+        row = self.conn.execute("SELECT draft_id FROM draft_msgs WHERE chat_id=? AND msg_id=?",
+                                (str(chat_id), str(msg_id))).fetchone()
+        return row["draft_id"] if row else None
+
+    def open_drafts(self):
+        return self.conn.execute("SELECT * FROM drafts WHERE status='open' ORDER BY id").fetchall()
 
     # ---------- lịch hẹn nội bộ ----------
     def add_schedule(self, at: datetime, all_day: bool, dept: str | None, text: str, sender: str = "",

@@ -27,7 +27,9 @@ Biến môi trường:
   TELEGRAM_TOKEN_SALE / _KETOAN / _KHO / _KYTHUAT
                           (tùy chọn) token bot riêng của từng bộ phận; bộ phận chưa có bot -> Bot Điều phối báo thay
   PAIR_CODE               mã ghép nối: gõ "/batdau <mã>" cho bot Telegram để nhận thông báo
-  ANTHROPIC_API_KEY       (tùy chọn) tự nhận đơn từ tin nhắn khách viết tự do
+  ORDER_SHEET_URL / ORDER_SHEET_TOKEN
+                          URL Apps Script + mã bí mật của Google Sheet ĐƠN HÀNG (google-sheet/DonHang.gs)
+  ANTHROPIC_API_KEY       (tùy chọn) tự nhận đơn từ tin nhắn khách viết tự do; đọc ảnh phiếu đơn
 """
 import hashlib
 import json
@@ -54,12 +56,14 @@ from . import groups
 from .customer_info import (SheetWriter, candidate_urls, download, image_links, image_url, is_complete,
                             parse_text, read_image)
 from .followup import dissatisfied, in_work_hours, needs_reply, parse_ts, short, utc_now, wait_text, waiting_lines
+from .orders import (Catalog, OrderSheet, ai_read_order, apply_edits, build_draft, pending_items, render,
+                     sheet_payload, totals, vnd)
 from .schedule import parse_add, parse_when, schedule_dept, when_text
 from .meeting import COMPANY, build_meeting, flatten, parse_meeting
 from .reports import full_report, lead_line, report_leads
 from .text import norm
 from .zalo import split_text
-from .telegram import XANH, Telegram, alert_level, pairing_reply
+from .telegram import VANG, XANH, Telegram, alert_level, pairing_reply
 from .zalocrm import ZaloCRM, verify_signature
 
 log = logging.getLogger("zalocrm-bot")
@@ -93,6 +97,7 @@ class CRMBot:
         self.shop_names: set[str] = set()
         self.shop_uids: set[str] = set()
         self.sheet = None             # SheetWriter: ghi khách từ nhóm "THÔNG TIN KHÁCH HÀNG" vào Google Sheet
+        self.order_sheet = None       # OrderSheet: Google Sheet đơn hàng (nhóm "CHỐT ĐƠN" -> nháp -> duyệt -> Sheet)
         self.staff_env: set[str] = set()  # tên nick Zalo nhân viên (khai trong .env); thêm/bớt bằng /nhanvien
         self.reply_minutes = 15       # khách chờ quá ngần này phút chưa được trả lời -> nhắc anh
         self.second_minutes = 60      # vẫn chưa trả lời -> nhắc lần 2
@@ -174,6 +179,10 @@ class CRMBot:
         if conv.get("threadType") == "group" and self.group_class(
                 (conv.get("contact") or {}).get("fullName") or "") == "thongtin":
             self.handle_customer_info(data, text)  # nhóm thông tin khách: ghi Google Sheet, không xử lý như chat khách
+            return
+        if conv.get("threadType") == "group" and self.group_class(
+                (conv.get("contact") or {}).get("fullName") or "") == "chotdon":
+            self.handle_order_doc(data, text)  # nhóm chốt đơn: đọc phiếu -> nháp đơn cho anh sửa và duyệt
             return
         if conv.get("threadType") == "group" and self.group_class(
                 (conv.get("contact") or {}).get("fullName") or "") == "congviec":
@@ -320,7 +329,8 @@ class CRMBot:
             # Trong nhóm chỉ Bot Điều phối đọc câu thường, và chỉ khi là: ghi đơn, gọi họp,
             # gọi tên 1 bot để hỏi, hoặc trả lời (reply) tin của 1 bot. Còn lại: không trả lời.
             return botname == DIEUPHOI and bool(parse_order(text) or parse_meeting(text)
-                                                 or parse_address(text, self.usernames) or reply_to)
+                                                 or parse_address(text, self.usernames) or reply_to
+                                                 or re.match(r"^\s*[nN]\d+[\s:,.\-]", text))
         m = re.match(r"^/\w+@(\w+)", text)
         if m:
             return m.group(1).lower() == self.usernames.get(botname, "").lower()
@@ -575,6 +585,151 @@ class CRMBot:
             "", "Em tự ghi lịch khi nhân viên nhắn ngày/giờ trong nhóm Zalo loại công việc (/nhom congviec …).",
             "Thêm tay: /lich them kho mai 9h giao tủ chị Hiền · /lich xong L5 · /lich xoa L5 · /lich chuyen L5 kythuat"])
 
+    # ---------- Nhóm "CHỐT ĐƠN": phiếu -> nháp đơn -> anh sửa, duyệt -> Google Sheet ----------
+    def catalog(self) -> Catalog:
+        """Danh mục kho (trang KHO của Sheet đơn hàng), lưu tạm 6 giờ."""
+        cached = self.store.get_setting("catalog_at")
+        fresh = cached and (datetime.now() - datetime.fromisoformat(cached)).total_seconds() < 6 * 3600
+        if self.order_sheet and not fresh:
+            try:
+                rows = self.order_sheet.products()
+                self.store.set_setting("catalog", json.dumps(rows, ensure_ascii=False))
+                self.store.set_setting("catalog_at", datetime.now().isoformat())
+            except Exception as e:  # noqa: BLE001
+                log.warning("Chưa lấy được danh mục kho từ Sheet đơn hàng: %s", e)
+        try:
+            return Catalog(json.loads(self.store.get_setting("catalog") or "[]"))
+        except ValueError:
+            return Catalog()
+
+    def handle_order_doc(self, data: dict, text: str):
+        """Ảnh phiếu đơn / phiếu giao hàng / giấy ghi tay (hoặc tin gõ đơn) -> nháp đơn gửi Bot Sale."""
+        sender = data.get("senderName") or ""
+        ctype = data.get("contentType") or "text"
+        image, caption, picture, media = "", "", None, "image/jpeg"
+        if ctype in ("image", "photo") or (ctype != "text" and '"href"' in text):
+            image, caption = image_url(text)
+            if not image:
+                return
+        elif ctype != "text" or not text or parse_command(text) or len(text) < 15 or not re.search(r"\d", text):
+            return  # trò chuyện thường trong nhóm chốt đơn
+        if not ai_available():
+            self.send_report("🛒 SALE – CẦN KIỂM TRA – phiếu chốt đơn\nEm cần bật AI (ANTHROPIC_API_KEY) mới đọc được "
+                             f"phiếu đơn. Người gửi: {sender}" + (f"\nẢnh: {image}" if image else ""), "sale")
+            return
+        catalog = self.catalog()
+        try:
+            if image:
+                picture, media = self.fetch_image(image_links(text))
+            read = ai_read_order(picture, media, caption if image else text, [r["code"] for r in catalog.rows])
+        except Exception as e:  # noqa: BLE001
+            log.exception("Không đọc được phiếu chốt đơn")
+            read, caption = None, str(e)
+        if not read:
+            self.send_report(f"🛒 SALE – em không đọc được phiếu của {sender or '?'}"
+                             + (f" ({caption})" if caption and not image else "")
+                             + ("\nẢnh: " + image if image else "") + "\nAnh gửi lại ảnh rõ hơn hoặc gõ tay giúp em.",
+                             "sale")
+            return
+        if not read.get("is_order") or not read.get("items"):
+            if image:
+                self.send_report(f"🛒 SALE – CẦN KIỂM TRA – ảnh của {sender or '?'} trong nhóm CHỐT ĐƠN không thấy "
+                                 f"đơn hàng nào.\nẢnh: {image}", "sale")
+            return
+        draft = build_draft(read, catalog)
+        did = self.store.add_draft(draft, sender, image, str(data.get("messageId") or ""))
+        self.post_draft(did)
+
+    def _send_tracked(self, botname: str, chat_id: str, text: str, draft_id: int):
+        """Gửi tin nháp và ghi nhớ mã tin: anh trả lời (reply) đúng tin đó là sửa nháp."""
+        bot = self.bots.get(botname) or self.bots.get(DIEUPHOI)
+        try:
+            ids = bot.send(chat_id, text, level=VANG)
+        except Exception:  # noqa: BLE001 - bot bộ phận chưa vào nhóm: Bot Điều phối gửi thay
+            if bot is self.bots.get(DIEUPHOI):
+                log.exception("Gửi nháp đơn thất bại")
+                return
+            ids = self.bots[DIEUPHOI].send(chat_id, text, level=VANG)
+        for mid in ids or []:
+            self.store.link_draft_msg(chat_id, mid, draft_id)
+
+    def post_draft(self, draft_id: int, chat_id: str | None = None, botname: str | None = None, note: str = ""):
+        """Hiện nháp: lần đầu -> Bot Sale (phòng điều phối hoặc chat của Sale); sau khi sửa -> ngay chat đang sửa."""
+        row, draft = self.store.get_draft(draft_id)
+        text = render(draft_id, draft, row["sender"]) + (f"\n\n{note}" if note else "")
+        if not self.tg:
+            self.send_report(text, "sale")
+            return
+        room = self.room_key()
+        room_chat = room.partition(":")[2] if room else None
+        if chat_id:
+            self._send_tracked("sale" if chat_id == room_chat else botname or DIEUPHOI, chat_id, text, draft_id)
+            return
+        keys = ([f"sale:{room_chat}"] + self.dept_only_chats("sale")) if room else self.targets("sale")
+        for key in keys:
+            bot, _, chat = key.partition(":")
+            self._send_tracked(bot, chat, text, draft_id)
+
+    def edit_draft(self, draft_id: int, text: str, chat_id: str, botname: str, sender: str = "") -> str | None:
+        row, draft = self.store.get_draft(draft_id)
+        if not row:
+            return f"Không có nháp N{draft_id}."
+        if row["status"] != "open":
+            return (f"Nháp N{draft_id} đã lên Sheet thành đơn {row['order_code']}." if row["status"] == "saved"
+                    else f"Nháp N{draft_id} đã bỏ.")
+        action, bad = apply_edits(draft, text, self.catalog())
+        self.store.save_draft(draft_id, draft)
+        if action == "huy":
+            self.store.save_draft(draft_id, status="cancelled")
+            return f"🗑 ĐÃ BỎ NHÁP N{draft_id} ({draft.get('customer') or '?'})."
+        if action == "ok":
+            return self.approve_draft(draft_id, sender)
+        note = ("❓ Em chưa hiểu: " + " | ".join(bad) + "\nVí dụ: 3 sl 2 · 3 gia 1460000 · coc 5tr") if bad else ""
+        lines = [ln for ln in text.splitlines() if ln.strip()]
+        if bad and len(bad) == len(lines):
+            return note
+        self.post_draft(draft_id, chat_id, botname, note)
+        return None
+
+    def approve_draft(self, draft_id: int, sender: str = "") -> str | None:
+        """Anh duyệt nháp -> ghi Sheet đơn hàng -> Sale báo đã lên đơn, Kế toán nhận tiền cọc, nhắc hàng riêng."""
+        row, draft = self.store.get_draft(draft_id)
+        if not draft["items"]:
+            return f"Nháp N{draft_id} chưa có món nào. Thêm: them <mã> <SL> <giá>"
+        if not self.order_sheet:
+            return ("⚠️ Chưa cài Google Sheet đơn hàng nên em chưa lên đơn được. Chạy lại script cài đặt và dán link "
+                    "Apps Script của Sheet đơn hàng (google-sheet/DonHang.gs).")
+        try:
+            res = self.order_sheet.save_order(sheet_payload(draft, row["sender"], row["image"], row["msg_id"]))
+        except Exception as e:  # noqa: BLE001
+            log.exception("Ghi Sheet đơn hàng thất bại")
+            res = {"ok": False, "error": str(e)}
+        if not res.get("ok"):
+            return f"⚠️ KHÔNG LÊN ĐƯỢC SHEET – N{draft_id}: {res.get('error', '?')}. Nháp vẫn giữ, anh thử \"ok\" lại sau."
+        code = res.get("code") or "?"
+        self.store.save_draft(draft_id, status="saved", code=code)
+        sub, total, paid, left = totals(draft)
+        who = (draft.get("customer") or "?") + (f" · {draft['phone']}" if draft.get("phone") else "")
+        approver = f" · duyệt: {sender}" if sender else ""
+        self.tell("sale", f"🛒 SALE – ĐÃ LÊN ĐƠN {code} – N{draft_id}\n👤 {who}\n💵 Tổng chốt {vnd(total)} · "
+                          f"{len(draft['items'])} món · Còn phải thu {vnd(left)}{approver}")
+        if paid:
+            parts = []
+            if draft.get("paid_before"):
+                parts.append(f"cọc/đã thu {vnd(draft['paid_before'])}"
+                             + (f" ({draft['paid_before_date']})" if draft.get("paid_before_date") else ""))
+            if draft.get("pay_now"):
+                parts.append(f"thu lần này {vnd(draft['pay_now'])}")
+            self.tell("ketoan", f"💰 KẾ TOÁN – ĐÃ THU – {code}\n👤 {who}\n💵 Tổng chốt {vnd(total)}\n💰 "
+                                + " + ".join(parts) + f"\n📌 Còn phải thu: {vnd(left)}\n"
+                                "→ Sale đã xác nhận. Theo dõi công nợ ở trang THU TIỀN trong Sheet.")
+        when = datetime.combine(datetime.now().date() + timedelta(days=1), datetime.min.time()).replace(hour=9)
+        for i, it in pending_items(draft):
+            self.add_schedule(when, False, "sale", f"Hàng riêng đơn {code} – {draft.get('customer') or '?'}: "
+                              f"{it.get('code') or ''} {it.get('name') or ''} – đi khảo sát / báo giá lại",
+                              "Bot Sale", f"đơn {code}")
+        return None
+
     def fetch_image(self, links: list[str]) -> tuple[bytes, str]:
         """Tải ảnh: thử ảnh gốc rồi ảnh thu nhỏ; link nội bộ của ZaloCRM được đổi sang địa chỉ ZaloCRM + API key."""
         base, key = getattr(self.crm, "base", ""), getattr(self.crm, "api_key", "")
@@ -635,7 +790,7 @@ class CRMBot:
             return
         contact = conv.get("contact") or {}
         title = contact.get("fullName") or "?"
-        if self.is_muted_name(title) or self.group_class(title) in ("noibo", "boqua", "congviec"):
+        if self.is_muted_name(title) or self.group_class(title) in ("noibo", "boqua", "congviec", "chotdon", "thongtin"):
             return
         detail = self.crm.contact(contact["id"]) if contact.get("id") else None
         created = (detail or {}).get("createdAt")
@@ -687,7 +842,7 @@ class CRMBot:
                 continue  # cùng 1 nhóm thấy từ 2 nick shop: chỉ quét 1 lần
             done.add(k)
             if conv.get("threadType") == "group" and self.group_class(
-                    (conv.get("contact") or {}).get("fullName") or "") in ("thongtin", "noibo", "boqua", "congviec"):
+                    (conv.get("contact") or {}).get("fullName") or "") in ("thongtin", "noibo", "boqua", "congviec", "chotdon"):
                 continue
             contact = conv.get("contact") or {}
             title, phone = contact.get("fullName") or "", contact.get("phone") or ""
@@ -954,7 +1109,7 @@ class CRMBot:
 
     # ---------- Telegram: nhận lệnh ----------
     def handle_telegram(self, chat_id: str, text: str, sender: str = "", botname: str = DIEUPHOI,
-                        reply_to: str | None = None) -> str | None:
+                        reply_to: str | None = None, reply_msg=None) -> str | None:
         """Tin nhắn gửi tới 1 bot Telegram. botname: "dieuphoi" hoặc mã bộ phận của bot đó."""
         text = (text or "").strip()
         if not text:
@@ -992,6 +1147,14 @@ class CRMBot:
             return reply
         if not self.store.is_subscribed(chat_id) and not in_room:  # bot bộ phận trong phòng điều phối: tự nhận lệnh
             return pairing_reply("/batdau", self.pair_code)[1]
+        # --- Sửa nháp đơn: trả lời (reply) tin nháp, hoặc gõ "N3 …" ---
+        draft_id = self.store.draft_for_msg(raw_chat, reply_msg) if reply_msg else None
+        body = text
+        glued = re.match(r"^\s*[nN](\d+)[\s:,.\-]+(.+)$", text, re.DOTALL)
+        if not draft_id and glued and not text.startswith("/"):
+            draft_id, body = int(glued.group(1)), glued.group(2)
+        if draft_id and not text.startswith("/"):
+            return self.edit_draft(draft_id, body, raw_chat, botname, sender)
         cmd = parse_command(text)
         # --- Họp: "họp công ty", "họp bộ phận kho", "/hop", "/hop kho" ---
         meeting = None if cmd else parse_meeting(text, default_dept=bot_dept)
@@ -1024,6 +1187,18 @@ class CRMBot:
             return self.staff_command(cmd.args)
         if cmd and cmd.name == "nhom":
             return self.group_command(cmd.args)
+        if cmd and cmd.name == "nhapdon":
+            if not cmd.args.strip():
+                drafts = self.store.open_drafts()
+                return ("📝 NHÁP ĐƠN CHỜ DUYỆT:\n" + "\n".join(
+                    f"  • N{r['id']} {json.loads(r['data']).get('customer') or '?'} – {r['created_at'][:16]}"
+                    for r in drafts) + "\nXem lại: /nhapdon N3") if drafts else "✅ Không có nháp đơn nào chờ duyệt."
+            m = re.match(r"^[nN#]?(\d+)\s*(.*)$", cmd.args, re.DOTALL)
+            if m and m.group(2).strip():
+                return self.edit_draft(int(m.group(1)), m.group(2), raw_chat, botname, sender)
+            if m:
+                self.post_draft(int(m.group(1)), raw_chat, botname)
+                return None
         if cmd and cmd.name == "lich":
             return self.schedule_command(cmd.args, bot_dept, sender)
         if cmd and cmd.name == "boqua":
@@ -1070,9 +1245,10 @@ class CRMBot:
                         continue
                     replied = ((msg.get("reply_to_message") or {}).get("from") or {}).get("username", "")
                     reply_to = next((n for n, u in self.usernames.items() if u and u.lower() == replied.lower()), None)
+                    reply_msg = (msg.get("reply_to_message") or {}).get("message_id")
                     if not self.should_handle(botname, str(chat["id"]), msg.get("text", ""), reply_to):
                         continue
-                    reply = self.handle_telegram(chat["id"], msg.get("text", ""), sender, botname, reply_to)
+                    reply = self.handle_telegram(chat["id"], msg.get("text", ""), sender, botname, reply_to, reply_msg)
                     if reply:
                         tg.send(str(chat["id"]), reply)
             except Exception:  # noqa: BLE001
@@ -1239,6 +1415,8 @@ def main():
     bot.staff_env = {norm(n) for n in os.environ.get("STAFF_NAMES", "").split(",") if n.strip()}
     bot.shop_uids = {u.strip() for u in os.environ.get("SHOP_UIDS", "").split(",") if u.strip()}
     bot.reply_minutes = int(os.environ.get("REPLY_MINUTES", "15"))
+    if os.environ.get("ORDER_SHEET_URL") and os.environ.get("ORDER_SHEET_TOKEN"):
+        bot.order_sheet = OrderSheet(os.environ["ORDER_SHEET_URL"], os.environ["ORDER_SHEET_TOKEN"])
     if os.environ.get("SHEET_URL") and os.environ.get("SHEET_TOKEN"):
         bot.sheet = SheetWriter(os.environ["SHEET_URL"], os.environ["SHEET_TOKEN"])
     bot.work_hours = os.environ.get("WORK_HOURS", "07:00-21:00").strip()

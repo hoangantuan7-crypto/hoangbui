@@ -3,6 +3,7 @@
 Loại nhóm:
   khach  – nhóm khách hàng / công trình: luôn theo dõi (báo việc, nhắc trả lời)
   noibo  – nhóm nội bộ của shop: KHÔNG đọc
+  chotdon – nhóm "CHỐT ĐƠN": ảnh phiếu đơn -> nháp đơn trong Telegram -> anh duyệt -> Google Sheet đơn hàng
   congviec – nhóm nội bộ làm việc: Bot Điều phối đọc lịch hẹn (ngày/giờ), giao bộ phận, nhắc trước giờ hẹn
   boqua  – nhóm không liên quan (CLB, gia đình…): KHÔNG đọc
 Nhóm chưa xếp loại: theo chế độ SCAN_GROUPS; nhóm mới -> Bot Điều phối hỏi anh xếp loại.
@@ -22,11 +23,15 @@ CLASSES = {
     "congviec": ("📋", "nội bộ – theo dõi lịch & nhắc việc"),
     "boqua": ("🔕", "bỏ qua – không đọc"),
     "thongtin": ("📇", "thông tin khách – ghi vào Google Sheet"),
+    "chotdon": ("🧾", "chốt đơn – đọc phiếu, tạo nháp đơn"),
 }
 INFO_PREFIX = "thong tin khach hang"  # nhóm tên "THÔNG TIN KHÁCH HÀNG…" tự là nhóm thông tin khách
+ORDER_PREFIX = "chot don"              # nhóm tên "CHỐT ĐƠN…" tự là nhóm chốt đơn
+AUTO = ((INFO_PREFIX, "thongtin"), (ORDER_PREFIX, "chotdon"))
 CLASS_WORDS = [("khach hang", "khach"), ("khach", "khach"), ("noi bo", "noibo"), ("noibo", "noibo"),
                ("cong viec", "congviec"), ("congviec", "congviec"), ("nhac lich", "congviec"), ("lich", "congviec"),
                ("bo qua", "boqua"), ("boqua", "boqua"), ("thong tin", "thongtin"), ("thongtin", "thongtin"),
+               ("chot don", "chotdon"), ("chotdon", "chotdon"),
                ("xoa", "xoa"), ("bo xep", "xoa")]
 
 
@@ -43,7 +48,7 @@ def save(store, mapping: dict[str, str]):
 
 def class_of(store, group_name: str) -> str | None:
     key = norm(group_name or "")
-    return load(store).get(key) or ("thongtin" if key.startswith(INFO_PREFIX) else None)
+    return load(store).get(key) or next((cls for prefix, cls in AUTO if key.startswith(prefix)), None)
 
 
 def group_name_from_customer(customer: str) -> str:
@@ -101,11 +106,9 @@ def listing(store, groups: list[dict]) -> tuple[str, list[str]]:
     names = [(g.get("contact") or {}).get("fullName") or "?" for g in groups]
     lines = ["📂 CÁC NHÓM ZALO (mới nhắn trước):"]
     for i, name in enumerate(names, 1):
-        cls = mapping.get(norm(name))
+        cls = mapping.get(norm(name)) or next((c for p, c in AUTO if norm(name).startswith(p)), None)
         icon, label = CLASSES.get(cls, ("❓", "chưa xếp loại"))
         lines.append(f"{i:>2}. {icon} {name} – {label}")
-        if cls is None and norm(name).startswith(INFO_PREFIX):
-            lines[-1] = f"{i:>2}. {CLASSES['thongtin'][0]} {name} – {CLASSES['thongtin'][1]}"
     lines += ["", "Xếp loại: /nhom khach 7, 8 · /nhom congviec 3 · /nhom noibo 1, 4 · /nhom boqua 3 · "
               "/nhom thongtin 6 · /nhom xoa 5",
               "(dùng số ở trên hoặc tên nhóm)"]

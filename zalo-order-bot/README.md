@@ -149,6 +149,22 @@ Tin nào có hẹn ngày hoặc giờ thì Bot Điều phối ghi thành lịch 
   `/lich xoa L5` · `/lich chuyen L5 kythuat`.
 - Tin không có ngày/giờ (trò chuyện thường) thì bot bỏ qua. Bot đọc sai thì `/lich xoa L<mã>`.
 
+### Nhóm "CHỐT ĐƠN" → nháp đơn trong Telegram → Google Sheet đơn hàng
+
+1. Tạo Google Sheet đơn hàng có 4 trang: ĐƠN HÀNG, CHI TIẾT ĐƠN, THU TIỀN, KHO (mã SP, tên, ĐVT, giá bán, phân loại,
+   tồn). Mở **Tiện ích mở rộng → Apps Script**, dán `google-sheet/DonHang.gs`, đổi `TOKEN`, rồi **Triển khai →
+   Ứng dụng web** (Thực thi: Tôi · Truy cập: Bất kỳ ai). Chạy lại script cài đặt, dán link `/exec` và mã bí mật.
+2. Lập nhóm Zalo tên bắt đầu bằng **CHỐT ĐƠN** (bot tự nhận ra). Gửi ảnh phiếu xuất kho, phiếu giao hàng & công nợ,
+   giấy ghi tay, hoặc gõ đơn.
+3. Bot (cần `ANTHROPIC_API_KEY`) đọc phiếu, khớp mã với trang KHO (mã ghi tắt như `612S` → `LFV-612S` thì đánh dấu ❓),
+   phiếu thiếu giá thì lấy giá kho, rồi **Bot Sale gửi NHÁP ĐƠN N<số>** 🟡.
+4. **Trả lời (reply) tin nháp** để sửa, mỗi dòng một lệnh: `3 sl 2` · `3 gia 1460000` · `3 ma H-2200V` · `xoa 4` ·
+   `them H-B1639 1 850k` · `rieng 9` · `tang 4` · `khach …` · `sdt …` · `dc …` · `giao 20/11` · `coc 5tr 06/10` ·
+   `thu 16tr6` · `giam 2120000` · `ghichu …`. Hoặc gõ `N3 …` ở đầu tin.
+5. Trả lời **`ok`** → bot ghi Sheet thành đơn `D<số>`. Bot Sale báo 🟢 ĐÃ LÊN ĐƠN, có tiền cọc/thu thì
+   **Bot Kế toán** báo 🟢 ĐÃ THU kèm số còn phải thu. Hàng riêng chưa có giá thì Bot Sale ghi lịch nhắc đi khảo sát/báo giá.
+   `huy` để bỏ nháp. `/nhapdon` xem các nháp chờ duyệt.
+
 ### Nhóm "THÔNG TIN KHÁCH HÀNG" → Google Sheet
 
 Lập một nhóm Zalo tên bắt đầu bằng **THÔNG TIN KHÁCH HÀNG**, có nick shop đang kết nối ZaloCRM ở trong. Bot tự nhận

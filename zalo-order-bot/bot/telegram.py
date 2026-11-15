@@ -37,8 +37,11 @@ def split_text(text: str, limit: int = MAX_TEXT) -> list[str]:
 # 3 mức thông báo (Telegram không cho bot đổi màu chữ -> dùng biểu tượng màu + chữ đậm + khung trích dẫn)
 DO, VANG, XANH = "do", "vang", "xanh"
 ICONS = {DO: "🔴", VANG: "🟡", XANH: "🟢"}
+GREEN_WORDS = ("ĐÃ LÊN ĐƠN", "ĐÃ THU", "ĐÃ BỎ NHÁP")
+YELLOW_WORDS = ("NHÁP ĐƠN", "CẦN KIỂM TRA", "không đọc được số điện thoại", "Không tải/đọc được",
+                "không lấy được link ảnh", "không đọc được phiếu")
 RED_WORDS = ("CHƯA ĐƯỢC GIẢI ĐÁP", "KHÁCH ĐANG CHỜ ANH TRẢ LỜI", "NHẮC LẦN 2", "CHƯA XỬ LÝ (quá",
-             "không đọc được tin Zalo", "không nhắn được", "không đọc được số điện thoại", "Không tải/đọc được")
+             "không đọc được tin Zalo", "không nhắn được", "KHÔNG LÊN ĐƯỢC SHEET")
 YELLOW_STARTS = ("🧭 Giao việc", "📅 GHI LỊCH", "⏰", "🔔", "🆕", "↪️", "📇")
 
 
@@ -46,10 +49,14 @@ def alert_level(text: str) -> str:
     """🔴 khách gặp vấn đề / việc quá hạn / bot lỗi · 🟡 việc mới, lịch hẹn, nhắc trước · 🟢 báo cáo, đã xong."""
     lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
     head = lines[0] if lines else ""
+    if any(w in head for w in GREEN_WORDS):
+        return XANH
+    if any(w in head for w in YELLOW_WORDS):
+        return VANG
     if (head.startswith(("⚠️", "❌", "⛔")) or any(w in head for w in RED_WORDS)
             or any(ln.startswith("❌") for ln in lines)):
         return DO
-    if head.startswith(YELLOW_STARTS) or re.search(r"– K\d+$", head):
+    if head.startswith(YELLOW_STARTS) or re.search(r"– [KLN]\d+$", head):
         return VANG
     return XANH
 
@@ -84,21 +91,26 @@ class Telegram:
             raise RuntimeError(f"Telegram {method}: {data.get('description')}")
         return data.get("result")
 
-    def send(self, chat_id: str, text: str, level: str | None = None):
-        """level=None: tin thường (trả lời lệnh). level=do/vang/xanh: thông báo có màu; xanh gửi im lặng."""
+    def send(self, chat_id: str, text: str, level: str | None = None) -> list[int]:
+        """level=None: tin thường (trả lời lệnh). level=do/vang/xanh: thông báo có màu; xanh gửi im lặng.
+        Trả về mã các tin đã gửi (để nhận ra khi anh trả lời đúng tin đó)."""
+        ids = []
         for i, chunk in enumerate(split_text(text, 3500 if level else MAX_TEXT)):
             payload = {"chat_id": chat_id, "text": chunk, "disable_web_page_preview": True}
             if level:
                 payload.update(text=format_alert(chunk, level, first=i == 0), parse_mode="HTML",
                                disable_notification=level == XANH)  # 🟢 không rung/không chuông
             try:
-                self.call("sendMessage", payload)
+                res = self.call("sendMessage", payload)
             except RuntimeError as e:
                 if not level or "parse" not in str(e).lower():
                     raise
                 log.warning("Telegram không nhận định dạng, gửi lại chữ thường: %s", e)
-                self.call("sendMessage", {"chat_id": chat_id, "text": f"{ICONS[level]} {chunk}",
-                                          "disable_web_page_preview": True})
+                res = self.call("sendMessage", {"chat_id": chat_id, "text": f"{ICONS[level]} {chunk}",
+                                                "disable_web_page_preview": True})
+            if isinstance(res, dict) and res.get("message_id"):
+                ids.append(res["message_id"])
+        return ids
 
     def get_updates(self, offset: int, timeout: int = 30) -> list[dict]:
         return self.call("getUpdates", {"offset": offset, "timeout": timeout,

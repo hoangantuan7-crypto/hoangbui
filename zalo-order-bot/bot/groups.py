@@ -19,9 +19,12 @@ CLASSES = {
     "khach": ("🏠", "khách hàng – theo dõi"),
     "noibo": ("👥", "nội bộ – không đọc"),
     "boqua": ("🔕", "bỏ qua – không đọc"),
+    "thongtin": ("📇", "thông tin khách – ghi vào Google Sheet"),
 }
+INFO_PREFIX = "thong tin khach hang"  # nhóm tên "THÔNG TIN KHÁCH HÀNG…" tự là nhóm thông tin khách
 CLASS_WORDS = [("khach hang", "khach"), ("khach", "khach"), ("noi bo", "noibo"), ("noibo", "noibo"),
-               ("bo qua", "boqua"), ("boqua", "boqua"), ("xoa", "xoa"), ("bo xep", "xoa")]
+               ("bo qua", "boqua"), ("boqua", "boqua"), ("thong tin", "thongtin"), ("thongtin", "thongtin"),
+               ("xoa", "xoa"), ("bo xep", "xoa")]
 
 
 def load(store) -> dict[str, str]:
@@ -36,7 +39,8 @@ def save(store, mapping: dict[str, str]):
 
 
 def class_of(store, group_name: str) -> str | None:
-    return load(store).get(norm(group_name or ""))
+    key = norm(group_name or "")
+    return load(store).get(key) or ("thongtin" if key.startswith(INFO_PREFIX) else None)
 
 
 def group_name_from_customer(customer: str) -> str:
@@ -97,6 +101,8 @@ def listing(store, groups: list[dict]) -> tuple[str, list[str]]:
         cls = mapping.get(norm(name))
         icon, label = CLASSES.get(cls, ("❓", "chưa xếp loại"))
         lines.append(f"{i:>2}. {icon} {name} – {label}")
-    lines += ["", "Xếp loại: /nhom khach 7, 8 · /nhom noibo 1, 4 · /nhom boqua 3 · /nhom xoa 5",
+        if cls is None and norm(name).startswith(INFO_PREFIX):
+            lines[-1] = f"{i:>2}. {CLASSES['thongtin'][0]} {name} – {CLASSES['thongtin'][1]}"
+    lines += ["", "Xếp loại: /nhom khach 7, 8 · /nhom noibo 1, 4 · /nhom boqua 3 · /nhom thongtin 6 · /nhom xoa 5",
               "(dùng số ở trên hoặc tên nhóm)"]
     return "\n".join(lines), names

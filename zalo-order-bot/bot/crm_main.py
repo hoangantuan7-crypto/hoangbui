@@ -15,6 +15,7 @@ Biến môi trường:
   SHOP_NAMES / SHOP_UIDS  tên / mã nick Zalo của shop (script cài đặt tự điền) – để nhận ra tin shop trả lời
   REPLY_MINUTES           khách chờ bao nhiêu phút chưa được trả lời thì nhắc, mặc định 15
   WORK_HOURS              giờ làm việc để nhắc, mặc định 07:00-21:00
+  SHEET_URL / SHEET_TOKEN URL Apps Script + mã bí mật của Google Sheet thông tin khách (google-sheet/AppsScript.gs)
   MEETING_TIME            giờ họp công ty tự động mỗi ngày, mặc định 18:00 (để trống = tắt)
   REMIND_MINUTES          nhắc lại tin khách chưa xử lý sau bao nhiêu phút, mặc định 30
   PORT                    cổng nhận webhook, mặc định 8090
@@ -47,6 +48,7 @@ from .dept_bots import ALLOWED, BOT_NAMES, DIEUPHOI, FREE_TEXT_ORDERS, dept_help
 from .departments import DEPTS, ROOM, TONG, dept_icon, dept_list, dept_name, parse_dept, route
 from .ai_assistant import ask_bot, parse_address
 from . import groups
+from .customer_info import SheetWriter, download, image_url, is_complete, parse_text, read_image
 from .followup import dissatisfied, in_work_hours, needs_reply, parse_ts, short, utc_now, wait_text, waiting_lines
 from .meeting import COMPANY, build_meeting, flatten, parse_meeting
 from .reports import full_report, lead_line, report_leads
@@ -83,6 +85,7 @@ class CRMBot:
         # Nick Zalo của shop: tin gửi từ điện thoại có thể bị ZaloCRM ghi nhầm là tin khách -> nhận ra bằng tên/mã
         self.shop_names: set[str] = set()
         self.shop_uids: set[str] = set()
+        self.sheet = None             # SheetWriter: ghi khách từ nhóm "THÔNG TIN KHÁCH HÀNG" vào Google Sheet
         self.staff_env: set[str] = set()  # tên nick Zalo nhân viên (khai trong .env); thêm/bớt bằng /nhanvien
         self.reply_minutes = 15       # khách chờ quá ngần này phút chưa được trả lời -> nhắc anh
         self.second_minutes = 60      # vẫn chưa trả lời -> nhắc lần 2
@@ -161,6 +164,10 @@ class CRMBot:
             dup = f"grpmsg:{conv['externalThreadId']}:{norm(data.get('senderName') or '')}:{data['sentAt']}:{digest}"
             if not self.store.mark_seen(dup):
                 return
+        if conv.get("threadType") == "group" and self.group_class(
+                (conv.get("contact") or {}).get("fullName") or "") == "thongtin":
+            self.handle_customer_info(data, text)  # nhóm thông tin khách: ghi Google Sheet, không xử lý như chat khách
+            return
         self.notice_new_conversation(conv, text, is_self)
         report = self.report_conv()
         contact = conv.get("contact") or {}
@@ -369,6 +376,60 @@ class CRMBot:
             rows.append(r)
         return rows
 
+    # ---------- Nhóm "THÔNG TIN KHÁCH HÀNG" -> Google Sheet ----------
+    def handle_customer_info(self, data: dict, text: str):
+        """Ảnh hoặc tin gõ tay thông tin khách -> đọc -> ghi Google Sheet -> báo anh qua Telegram."""
+        sender = data.get("senderName") or ""
+        ctype = data.get("contentType") or "text"
+        image = ""
+        if ctype in ("image", "photo", "gif") or (ctype != "text" and '"href"' in text):
+            image, caption = image_url(text)
+            if not image:
+                self.send_report("⚠️ Nhóm THÔNG TIN KHÁCH HÀNG: có ảnh nhưng em không lấy được link ảnh.", "sale")
+                return
+            try:
+                customers, source = read_image(*download(image), caption)
+            except Exception as e:  # noqa: BLE001
+                log.exception("Không đọc được ảnh thông tin khách")
+                self.send_report(f"⚠️ Không tải/đọc được ảnh thông tin khách ({e}). Ảnh: {image}", "sale")
+                return
+            if not customers:
+                self.send_report(f"⚠️ Ảnh {sender} gửi vào nhóm THÔNG TIN KHÁCH HÀNG: em không đọc được thông tin khách "
+                                 f"(ảnh mờ hoặc chữ viết tay khó đọc). Anh xem và nhập tay giúp em: {image}", "sale")
+                return
+        elif ctype in (None, "", "text") and text:
+            customers, source = parse_text(text), "Gõ tay"
+            if not customers:
+                return  # trò chuyện bình thường trong nhóm, không phải thông tin khách
+        else:
+            return
+        when = parse_ts(data.get("sentAt")).astimezone().strftime("%d/%m/%Y %H:%M")
+        lines = []
+        for c in customers:
+            unclear = bool(c.get("unclear")) or not is_complete(c) or source == "Ảnh (OCR)" and not c.get("address")
+            row = {"date": c.get("date") or when, "name": c.get("name", ""), "phone": c.get("phone", ""),
+                   "address": c.get("address", ""), "note": c.get("note", ""), "sender": sender, "source": source,
+                   "status": "Cần kiểm tra" if unclear else "Đủ thông tin", "image": image,
+                   "msgId": str(data.get("messageId") or "")}
+            who = " – ".join(p for p in (row["name"] or "(chưa rõ tên)", row["phone"] or "(chưa có SĐT)", row["address"]) if p)
+            if not self.sheet:
+                lines.append(f"📇 {who} (chưa cài Google Sheet nên chưa ghi)")
+                continue
+            try:
+                res = self.sheet.append(row)
+            except Exception as e:  # noqa: BLE001
+                log.exception("Ghi Google Sheet thất bại")
+                lines.append(f"❌ {who}: không ghi được vào Google Sheet ({e})")
+                continue
+            if not res.get("ok"):
+                lines.append(f"❌ {who}: Google Sheet từ chối ({res.get('error', '?')}) – kiểm tra mã bí mật")
+            elif res.get("duplicate"):
+                lines.append(f"↩️ {who}: đã có trong Sheet ở dòng {res.get('row')} (STT {res.get('stt')}), không thêm trùng")
+            else:
+                lines.append(f"✅ STT {res.get('stt')}: {who}" + (" ⚠️ cần kiểm tra" if unclear else ""))
+        head = f"📇 THÔNG TIN KHÁCH HÀNG – {len(customers)} khách từ {source.lower()} của {sender or '?'}"
+        self.send_report("\n".join([head] + lines + ([f"Ảnh gốc: {image}"] if image else [])), "sale")
+
     # ---------- Xếp loại nhóm, khách mới / nhóm mới ----------
     def group_command(self, args: str) -> str:
         convs = groups.unique_groups(self.crm.refresh_conversations())
@@ -465,6 +526,9 @@ class CRMBot:
             if k in done:
                 continue  # cùng 1 nhóm thấy từ 2 nick shop: chỉ quét 1 lần
             done.add(k)
+            if conv.get("threadType") == "group" and self.group_class(
+                    (conv.get("contact") or {}).get("fullName") or "") in ("thongtin", "noibo", "boqua"):
+                continue
             contact = conv.get("contact") or {}
             title, phone = contact.get("fullName") or "", contact.get("phone") or ""
             group = conv.get("threadType") == "group"
@@ -1005,6 +1069,8 @@ def main():
     bot.staff_env = {norm(n) for n in os.environ.get("STAFF_NAMES", "").split(",") if n.strip()}
     bot.shop_uids = {u.strip() for u in os.environ.get("SHOP_UIDS", "").split(",") if u.strip()}
     bot.reply_minutes = int(os.environ.get("REPLY_MINUTES", "15"))
+    if os.environ.get("SHEET_URL") and os.environ.get("SHEET_TOKEN"):
+        bot.sheet = SheetWriter(os.environ["SHEET_URL"], os.environ["SHEET_TOKEN"])
     bot.work_hours = os.environ.get("WORK_HOURS", "07:00-21:00").strip()
     bot.meeting_time = os.environ.get("MEETING_TIME", "18:00").strip()  # để trống = tắt họp tự động
     # Mở cổng nhận webhook TRƯỚC: việc hỏi tên 5 bot Telegram có thể mất vài giây

@@ -15,6 +15,7 @@
 #   ACCOUNT_NUMBER   số thứ tự tài khoản Zalo (mặc định 1 = tài khoản đang kết nối gần nhất)
 #   REPLACE_WEBHOOK  "c" để cho phép thay webhook đang trỏ chỗ khác
 #   STAFF_NAMES      tên Zalo nhân viên, cách nhau dấu phẩy
+#   SHEET_URL / SHEET_TOKEN  link Apps Script + mã bí mật của Google Sheet thông tin khách
 #   TELEGRAM_TOKEN   token bot Telegram (từ @BotFather) – có token thì bot chỉ ĐỌC Zalo, báo qua Telegram
 set -euo pipefail
 
@@ -165,6 +166,27 @@ else
   echo "Nhóm báo đơn: $GROUP"
 fi
 
+say "Google Sheet thông tin khách (nhóm Zalo THÔNG TIN KHÁCH HÀNG)"
+CUR_SHEET=$(env_get ORDER_BOT_SHEET_URL)
+if [ -n "$CUR_SHEET" ]; then H="Enter = giữ link cũ"; else H="Enter = bỏ qua"; fi
+SHEET_URL=$(ask "Dán URL ứng dụng web Apps Script ($H): " SHEET_URL "$CUR_SHEET")
+SHEET_URL=$(printf '%s' "$SHEET_URL" | tr -d '[:space:]')
+CUR_STOKEN=$(env_get ORDER_BOT_SHEET_TOKEN)
+SHEET_SECRET=""
+if [ -n "$SHEET_URL" ]; then
+  case "$SHEET_URL" in https://script.google.com/*/exec) ;; *) die "Link không đúng dạng https://script.google.com/macros/s/…/exec";; esac
+  if [ -n "$CUR_STOKEN" ]; then H="Enter = giữ mã cũ"; else H="mã anh đặt ở dòng TOKEN"; fi
+  T=$(ask "Mã bí mật của Sheet ($H): " SHEET_TOKEN "$CUR_STOKEN")
+  SHEET_SECRET=$(printf '%s' "$T" | tr -d '[:space:]')
+  [ -n "$SHEET_SECRET" ] || die "Cần mã bí mật (dòng const TOKEN = '...' trong Apps Script)."
+  # Thử gọi Sheet: GET chỉ kiểm tra link, không ghi gì
+  if curl -fsSL --max-time 30 "$SHEET_URL" 2>/dev/null | grep -q '"ok":true'; then
+    echo "OK – Google Sheet đã sẵn sàng."
+  else
+    echo "⚠️  Chưa gọi được link Sheet (kiểm tra lại bước Triển khai: Truy cập = Bất kỳ ai). Bot vẫn cài tiếp."
+  fi
+fi
+
 say "Cấu hình Webhook ZaloCRM -> bot"
 OLD_URL=$(setting webhook_url)
 if [ -n "$OLD_URL" ] && [ "$OLD_URL" != "$WEBHOOK_URL" ]; then
@@ -183,6 +205,8 @@ env_set ORDER_BOT_WEBHOOK_SECRET "$SECRET"
 env_set ORDER_BOT_ACCOUNT_ID "$ACCOUNT_ID"
 env_set ORDER_BOT_SHOP_NAMES "$SHOP_NAMES"
 env_set ORDER_BOT_STAFF_NAMES "$STAFF"
+env_set ORDER_BOT_SHEET_URL "$SHEET_URL"
+env_set ORDER_BOT_SHEET_TOKEN "$SHEET_SECRET"
 env_set ORDER_BOT_SHOP_UIDS "$SHOP_UIDS"
 grep -qE "^ORDER_BOT_REPLY_MINUTES=" .env || env_set ORDER_BOT_REPLY_MINUTES "15"
 grep -qE "^ORDER_BOT_WORK_HOURS=" .env || env_set ORDER_BOT_WORK_HOURS "07:00-21:00"
@@ -227,12 +251,12 @@ if [ -n "$TG_TOKEN" ]; then
 
 ✅ CÀI XONG – báo đơn qua Telegram!
 
-Việc còn lại trên điện thoại (mã ghép nối: $PAIR_CODE):
-  1. Mở Bot Điều phối @$TG_NAME, bấm Start, gõ:   /batdau $PAIR_CODE
+Việc còn lại trên điện thoại (<mã> = mã ghép nối, xem ở dòng cuối):
+  1. Mở Bot Điều phối @$TG_NAME, bấm Start, gõ:   /batdau <mã>
      -> chat riêng của anh với Bot Điều phối: nhận báo cáo tổng + báo sự cố.
 EOF
   if [ -n "$DEPT_LINES" ]; then
-    printf '  2. Mở lần lượt từng bot bộ phận, bấm Start, gõ  /batdau %s  trong mỗi bot:\n' "$PAIR_CODE"
+    printf '  2. Mở lần lượt từng bot bộ phận, bấm Start, gõ  /batdau <mã>  trong mỗi bot:\n'
     printf "$DEPT_LINES"
     printf '     -> bot nào có việc quá hạn sẽ nhắn RIÊNG cho anh.\n'
   fi
@@ -241,14 +265,14 @@ EOF
      a) Nhắn @BotFather:  /setprivacy  -> chọn @$TG_NAME -> Disable
         (để Bot Điều phối đọc được lệnh trong nhóm như /xong K5)
      b) Tạo 1 nhóm Telegram, thêm Bot Điều phối và các bot bộ phận vào nhóm, rồi gõ trong nhóm:
-          /batdau@$TG_NAME $PAIR_CODE phong
+          /batdau@$TG_NAME <mã> phong
      -> Bot Điều phối sẽ gọi tên từng bot giao việc trong nhóm này.
   4. Nhờ ai nhắn vào Zalo shop: "lấy em 2 tủ lavabo 80 nhé"
      -> trong phòng: Bot Điều phối giao việc cho Bot Sale, Bot Sale xác nhận (khoảng 15 giây).
   5. Họp: gõ "họp công ty" hoặc "họp bộ phận kho" trong phòng. Bot tự họp công ty lúc ${MEETING_AT:-18:00} mỗi ngày.
      Hỏi riêng: "Kho ơi, tủ của anh Nam đến đâu rồi?" (cần ANTHROPIC_API_KEY trong .env).
 
-Mã ghép nối: $PAIR_CODE  (giữ kín – ai có mã này sẽ xem được tin khách)
+Xem mã ghép nối:  grep ORDER_BOT_PAIR_CODE .env   (giữ kín – không chụp màn hình dòng đó gửi ai)
 Xem log bot:      docker logs -f zalo-order-bot
 Kiểm tra bot:     docker exec zalo-order-bot python -m bot.crm_main --check
 EOF

@@ -15,6 +15,7 @@
 #   ACCOUNT_NUMBER   số thứ tự tài khoản Zalo (mặc định 1 = tài khoản đang kết nối gần nhất)
 #   REPLACE_WEBHOOK  "c" để cho phép thay webhook đang trỏ chỗ khác
 #   STAFF_NAMES      tên Zalo nhân viên, cách nhau dấu phẩy
+#   ANTHROPIC_API_KEY  khóa Claude để đọc ảnh chụp giấy/chữ viết tay (bỏ trống = OCR miễn phí)
 #   SHEET_URL / SHEET_TOKEN  link Apps Script + mã bí mật của Google Sheet thông tin khách
 #   TELEGRAM_TOKEN   token bot Telegram (từ @BotFather) – có token thì bot chỉ ĐỌC Zalo, báo qua Telegram
 set -euo pipefail
@@ -23,6 +24,11 @@ INTERACTIVE=0; [ -t 0 ] && INTERACTIVE=1
 ask() {  # ask "câu hỏi" BIẾN_MÔI_TRƯỜNG giá_trị_mặc_định
   local answer=""
   if [ "$INTERACTIVE" = 1 ]; then read -rp "$1" answer; else answer="${!2:-}"; fi
+  printf '%s' "${answer:-$3}"
+}
+ask_secret() {  # như ask, nhưng không hiện chữ khi dán (khóa, mật khẩu) – chụp màn hình không lộ
+  local answer=""
+  if [ "$INTERACTIVE" = 1 ]; then read -rsp "$1" answer; echo >&2; else answer="${!2:-}"; fi
   printf '%s' "${answer:-$3}"
 }
 
@@ -176,7 +182,7 @@ SHEET_SECRET=""
 if [ -n "$SHEET_URL" ]; then
   case "$SHEET_URL" in https://script.google.com/*/exec) ;; *) die "Link không đúng dạng https://script.google.com/macros/s/…/exec";; esac
   if [ -n "$CUR_STOKEN" ]; then H="Enter = giữ mã cũ"; else H="mã anh đặt ở dòng TOKEN"; fi
-  T=$(ask "Mã bí mật của Sheet ($H): " SHEET_TOKEN "$CUR_STOKEN")
+  T=$(ask_secret "Mã bí mật của Sheet ($H, chữ sẽ không hiện khi dán): " SHEET_TOKEN "$CUR_STOKEN")
   SHEET_SECRET=$(printf '%s' "$T" | tr -d '[:space:]')
   [ -n "$SHEET_SECRET" ] || die "Cần mã bí mật (dòng const TOKEN = '...' trong Apps Script)."
   # Thử gọi Sheet: GET chỉ kiểm tra link, không ghi gì
@@ -185,6 +191,24 @@ if [ -n "$SHEET_URL" ]; then
   else
     echo "⚠️  Chưa gọi được link Sheet (kiểm tra lại bước Triển khai: Truy cập = Bất kỳ ai). Bot vẫn cài tiếp."
   fi
+fi
+
+say "AI đọc ảnh chụp giấy, chữ viết tay (Claude Haiku – tùy chọn, tính phí theo ảnh)"
+CUR_AI=$(env_get ANTHROPIC_API_KEY)
+if [ -n "$CUR_AI" ]; then H="Enter = giữ khóa cũ"; else H="Enter = bỏ qua, đọc ảnh bằng OCR miễn phí"; fi
+AI_KEY=$(ask_secret "Dán Anthropic API key ($H, chữ sẽ không hiện khi dán): " ANTHROPIC_API_KEY "$CUR_AI")
+AI_KEY=$(printf '%s' "$AI_KEY" | tr -d '[:space:]')
+if [ -n "$AI_KEY" ]; then
+  case "$AI_KEY" in sk-ant-*) ;; *) die "Khóa AI phải bắt đầu bằng sk-ant-  (copy lại ở console.anthropic.com → API Keys)";; esac
+  # Kiểm tra khóa bằng cách liệt kê model (miễn phí, không tốn tiền)
+  if curl -fsS --max-time 20 https://api.anthropic.com/v1/models -H "x-api-key: $AI_KEY" \
+       -H "anthropic-version: 2023-06-01" >/dev/null 2>&1; then
+    echo "OK – khóa AI dùng được. Ảnh sẽ được Claude Haiku đọc."
+  else
+    echo "⚠️  Anthropic chưa nhận khóa này (sai khóa, khóa đã xóa, hoặc máy không vào được mạng). Bot vẫn cài tiếp."
+  fi
+else
+  echo "Không dùng AI: ảnh đọc bằng OCR miễn phí (chữ viết tay sẽ khó đọc)."
 fi
 
 say "Cấu hình Webhook ZaloCRM -> bot"
@@ -207,6 +231,7 @@ env_set ORDER_BOT_SHOP_NAMES "$SHOP_NAMES"
 env_set ORDER_BOT_STAFF_NAMES "$STAFF"
 env_set ORDER_BOT_SHEET_URL "$SHEET_URL"
 env_set ORDER_BOT_SHEET_TOKEN "$SHEET_SECRET"
+env_set ANTHROPIC_API_KEY "$AI_KEY"
 env_set ORDER_BOT_SHOP_UIDS "$SHOP_UIDS"
 grep -qE "^ORDER_BOT_REPLY_MINUTES=" .env || env_set ORDER_BOT_REPLY_MINUTES "15"
 grep -qE "^ORDER_BOT_WORK_HOURS=" .env || env_set ORDER_BOT_WORK_HOURS "07:00-21:00"

@@ -36,6 +36,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -48,7 +49,8 @@ from .dept_bots import ALLOWED, BOT_NAMES, DIEUPHOI, FREE_TEXT_ORDERS, dept_help
 from .departments import DEPTS, ROOM, TONG, dept_icon, dept_list, dept_name, parse_dept, route
 from .ai_assistant import ask_bot, parse_address
 from . import groups
-from .customer_info import SheetWriter, download, image_url, is_complete, parse_text, read_image
+from .customer_info import (SheetWriter, candidate_urls, download, image_links, image_url, is_complete,
+                            parse_text, read_image)
 from .followup import dissatisfied, in_work_hours, needs_reply, parse_ts, short, utc_now, wait_text, waiting_lines
 from .meeting import COMPANY, build_meeting, flatten, parse_meeting
 from .reports import full_report, lead_line, report_leads
@@ -388,10 +390,12 @@ class CRMBot:
                 self.send_report("⚠️ Nhóm THÔNG TIN KHÁCH HÀNG: có ảnh nhưng em không lấy được link ảnh.", "sale")
                 return
             try:
-                customers, source = read_image(*download(image), caption)
+                customers, source = read_image(*self.fetch_image(image_links(text)), caption)
             except Exception as e:  # noqa: BLE001
                 log.exception("Không đọc được ảnh thông tin khách")
-                self.send_report(f"⚠️ Không tải/đọc được ảnh thông tin khách ({e}). Ảnh: {image}", "sale")
+                where = urllib.parse.urlparse(image)
+                self.send_report(f"⚠️ Không tải/đọc được ảnh thông tin khách ({e}; ảnh ở {where.scheme}://{where.netloc}).",
+                                 "sale")
                 return
             if not customers:
                 self.send_report(f"⚠️ Ảnh {sender} gửi vào nhóm THÔNG TIN KHÁCH HÀNG: em không đọc được thông tin khách "
@@ -429,6 +433,19 @@ class CRMBot:
                 lines.append(f"✅ STT {res.get('stt')}: {who}" + (" ⚠️ cần kiểm tra" if unclear else ""))
         head = f"📇 THÔNG TIN KHÁCH HÀNG – {len(customers)} khách từ {source.lower()} của {sender or '?'}"
         self.send_report("\n".join([head] + lines + ([f"Ảnh gốc: {image}"] if image else [])), "sale")
+
+    def fetch_image(self, links: list[str]) -> tuple[bytes, str]:
+        """Tải ảnh: thử ảnh gốc rồi ảnh thu nhỏ; link nội bộ của ZaloCRM được đổi sang địa chỉ ZaloCRM + API key."""
+        base, key = getattr(self.crm, "base", ""), getattr(self.crm, "api_key", "")
+        error: Exception | None = None
+        for link in links:
+            for url in candidate_urls(link, base):
+                try:
+                    return download(url, {"X-API-Key": key} if base and url.startswith(base) and key else None)
+                except Exception as e:  # noqa: BLE001
+                    error = e
+                    log.info("Tải ảnh không được từ %s: %s", urllib.parse.urlparse(url).netloc, e)
+        raise error or ValueError("tin không có link ảnh")
 
     # ---------- Xếp loại nhóm, khách mới / nhóm mới ----------
     def group_command(self, args: str) -> str:

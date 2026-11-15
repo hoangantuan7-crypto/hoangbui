@@ -16,6 +16,8 @@ Biến môi trường:
   REPLY_MINUTES           khách chờ bao nhiêu phút chưa được trả lời thì nhắc, mặc định 15
   WORK_HOURS              giờ làm việc để nhắc, mặc định 07:00-21:00
   SHEET_URL / SHEET_TOKEN URL Apps Script + mã bí mật của Google Sheet thông tin khách (google-sheet/AppsScript.gs)
+  SCHEDULE_MINUTES        nhắc lịch hẹn (nhóm Zalo loại "congviec") trước bao nhiêu phút, mặc định 60
+  AGENDA_TIME             giờ gửi lịch hôm nay cho từng bộ phận, mặc định 07:30 (để trống = tắt)
   MEETING_TIME            giờ họp công ty tự động mỗi ngày, mặc định 18:00 (để trống = tắt)
   REMIND_MINUTES          nhắc lại tin khách chưa xử lý sau bao nhiêu phút, mặc định 30
   PORT                    cổng nhận webhook, mặc định 8090
@@ -52,6 +54,7 @@ from . import groups
 from .customer_info import (SheetWriter, candidate_urls, download, image_links, image_url, is_complete,
                             parse_text, read_image)
 from .followup import dissatisfied, in_work_hours, needs_reply, parse_ts, short, utc_now, wait_text, waiting_lines
+from .schedule import parse_add, parse_when, schedule_dept, when_text
 from .meeting import COMPANY, build_meeting, flatten, parse_meeting
 from .reports import full_report, lead_line, report_leads
 from .text import norm
@@ -84,6 +87,8 @@ class CRMBot:
         self.ask = ask_bot            # hỏi đáp bằng AI (thay được trong test)
         self.remind_minutes = 30
         self.meeting_time = "18:00"   # họp công ty tự động mỗi ngày
+        self.schedule_minutes = 60    # nhắc lịch hẹn nội bộ trước giờ hẹn bao nhiêu phút
+        self.agenda_time = "07:30"    # giờ gửi lịch hôm nay cho từng bộ phận
         # Nick Zalo của shop: tin gửi từ điện thoại có thể bị ZaloCRM ghi nhầm là tin khách -> nhận ra bằng tên/mã
         self.shop_names: set[str] = set()
         self.shop_uids: set[str] = set()
@@ -169,6 +174,10 @@ class CRMBot:
         if conv.get("threadType") == "group" and self.group_class(
                 (conv.get("contact") or {}).get("fullName") or "") == "thongtin":
             self.handle_customer_info(data, text)  # nhóm thông tin khách: ghi Google Sheet, không xử lý như chat khách
+            return
+        if conv.get("threadType") == "group" and self.group_class(
+                (conv.get("contact") or {}).get("fullName") or "") == "congviec":
+            self.handle_internal(conv, data, text)  # nhóm nội bộ làm việc: ghi lịch hẹn, không coi là tin khách
             return
         self.notice_new_conversation(conv, text, is_self)
         report = self.report_conv()
@@ -438,6 +447,133 @@ class CRMBot:
         head = f"📇 THÔNG TIN KHÁCH HÀNG – {len(customers)} khách từ {source.lower()} của {sender or '?'}"
         self.send_report("\n".join([head] + lines + ([f"Ảnh gốc: {image}"] if image else [])), "sale")
 
+    # ---------- Nhóm nội bộ "công việc": lịch hẹn + nhắc việc ----------
+    def handle_internal(self, conv: dict, data: dict, text: str):
+        """Tin nhân viên trong nhóm nội bộ: có hẹn ngày/giờ -> ghi lịch, giao bộ phận, báo xác nhận."""
+        if (data.get("contentType") or "text") != "text" or not text or parse_command(text):
+            return
+        sent = parse_ts(data.get("sentAt")).astimezone().replace(tzinfo=None)
+        when = parse_when(text, sent)
+        if not when:
+            return
+        at, all_day = when
+        group = (conv.get("contact") or {}).get("fullName") or "?"
+        self.add_schedule(at, all_day, schedule_dept(text), text, data.get("senderName") or "", f"nhóm {group}")
+
+    def add_schedule(self, at: datetime, all_day: bool, dept: str | None, text: str, sender: str,
+                     source: str) -> str | None:
+        now = datetime.now()
+        soon = not all_day and (at - now).total_seconds() < self.schedule_minutes * 60
+        today_passed = all_day and at.date() == now.date() and f"{now:%H:%M}" >= (self.agenda_time or "00:00")
+        sid, new = self.store.add_schedule(at, all_day, dept, text, sender, source,
+                                           2 if today_passed else 1 if soon else 0)
+        if not new:
+            return None
+        remind = ("Em báo trong lịch sáng ngày đó." if all_day and not today_passed
+                  else "Hôm nay, em không nhắc lại." if all_day else f"Em nhắc trước {self.schedule_minutes} phút.")
+        msg = (f"📅 GHI LỊCH L{sid} – {self.schedule_owner(dept)}\n🕘 {when_text(at, all_day, now)}\n"
+               f"💬 “{short(text, 200)}”\n👤 {sender or '?'} · {source}\n"
+               f"→ {remind} Xong: /lich xong L{sid} · Sai: /lich xoa L{sid} · Đổi bộ phận: /lich chuyen L{sid} kho")
+        self.tell(dept, msg)
+        return msg
+
+    @staticmethod
+    def schedule_owner(dept: str | None) -> str:
+        return f"{dept_icon(dept)} {dept_name(dept)}" if dept else "🧭 Điều phối"
+
+    def tell(self, dept: str | None, text: str) -> bool:
+        """Nhắc việc: có phòng điều phối -> bot bộ phận tự nói trong phòng (+ nhóm riêng của bộ phận);
+        không có phòng -> chat của bộ phận + chat tổng."""
+        room = self.room_key()
+        if not room:
+            return self.send_report(text, dept)
+        try:
+            self._speak(dept or DIEUPHOI, room.partition(":")[2], text)
+        except Exception:  # noqa: BLE001
+            log.exception("Không nhắn được vào phòng điều phối")
+            return self.send_report(text, dept)
+        for key in (self.dept_only_chats(dept) if dept else []):
+            self._tg_send(key, text)
+        return True
+
+    @staticmethod
+    def schedule_line(r, now: datetime) -> str:
+        return (f"  • L{r['id']} {when_text(r['at'], bool(r['all_day']), now)} – “{short(r['text'], 100)}”"
+                + (f" ({r['sender']})" if r["sender"] else ""))
+
+    def check_schedules(self, now: datetime | None = None) -> int:
+        """Nhắc lịch hẹn có giờ: trước giờ hẹn (schedule_minutes) và đúng giờ. Trả về số tin nhắc."""
+        now = now or datetime.now()
+        lead = timedelta(minutes=self.schedule_minutes)
+        sent = 0
+        for r in self.store.open_schedules(now - timedelta(days=1), now + lead + timedelta(minutes=1)):
+            if r["all_day"] or r["remind_level"] >= 2:
+                continue
+            at = datetime.fromisoformat(r["at"])
+            who = self.schedule_owner(r["dept"])
+            if now >= at:
+                self.store.set_schedule(r["id"], level=2)
+                if now - at <= timedelta(hours=2):  # bot tắt lâu rồi bật lại: không nhắc lịch đã qua lâu
+                    sent += self.tell(r["dept"], f"🔔 ĐẾN GIỜ – {who}\n{self.schedule_line(r, now)}\n"
+                                                 f"→ Làm xong gõ /lich xong L{r['id']}")
+            elif r["remind_level"] == 0 and now >= at - lead:
+                self.store.set_schedule(r["id"], level=1)
+                mins = max(1, round((at - now).total_seconds() / 60))
+                sent += self.tell(r["dept"], f"⏰ CÒN {wait_text(mins).upper()} – {who}\n{self.schedule_line(r, now)}")
+        return sent
+
+    def send_agenda(self, now: datetime | None = None) -> int:
+        """Lịch hôm nay: mỗi bộ phận nhận lịch của mình (lịch chung -> Bot Điều phối)."""
+        now = now or datetime.now()
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        rows = self.store.open_schedules(start, start + timedelta(days=1))
+        for dept in dict.fromkeys(r["dept"] for r in rows):
+            mine = [r for r in rows if r["dept"] == dept]
+            self.tell(dept, "\n".join([f"📅 LỊCH HÔM NAY {now:%d/%m} – {self.schedule_owner(dept)}"]
+                                      + [self.schedule_line(r, now) for r in mine]
+                                      + ["→ Xong việc nào gõ /lich xong L<mã>"]))
+            for r in mine:
+                if r["all_day"]:
+                    self.store.set_schedule(r["id"], level=2)
+        return len(rows)
+
+    def schedule_command(self, args: str, bot_dept: str | None = None, sender: str = "") -> str:
+        now = datetime.now()
+        words = args.split()
+        action = norm(words[0]) if words else ""
+        if action in ("them", "add", "ghi"):
+            dept, body, when = parse_add(" ".join(words[1:]), now)
+            if not body or not when:
+                return ("❓ Em chưa đọc được ngày/giờ hẹn (hoặc giờ đó đã qua). Ví dụ:\n"
+                        "/lich them kho mai 9h giao tủ chị Hiền\n/lich them 20/11 14h30 lắp gương nhà anh Tùng")
+            return self.add_schedule(*when, dept or bot_dept or schedule_dept(body), body, sender,
+                                     "Telegram") or "↩️ Lịch này đã có rồi."
+        if action in ("xong", "xoa", "huy", "chuyen"):
+            m = re.match(r"^[lL#]?(\d+)$", words[1]) if len(words) > 1 else None
+            if not m:
+                return f"Cú pháp: /lich {action} L<mã>" + (" <bộ phận>" if action == "chuyen" else "")
+            sid = int(m.group(1))
+            if action == "chuyen":
+                dept = parse_dept(words[2]) if len(words) > 2 else None
+                if dept not in DEPTS:
+                    return f"Cú pháp: /lich chuyen L{sid} <bộ phận>. Bộ phận: {dept_list()}"
+                if not self.store.set_schedule(sid, dept=dept):
+                    return f"Không có lịch L{sid} đang mở."
+                row = self.store.get_schedule(sid)
+                self.tell(dept, f"↪️ Lịch chuyển sang {self.schedule_owner(dept)}:\n{self.schedule_line(row, now)}")
+                return f"↪️ Đã chuyển L{sid} sang {self.schedule_owner(dept)}"
+            if not self.store.set_schedule(sid, status="done" if action == "xong" else "deleted"):
+                return f"Không có lịch L{sid} đang mở."
+            return f"👍 Đã xong lịch L{sid}" if action == "xong" else f"🗑 Đã xóa lịch L{sid}"
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        rows = self.store.open_schedules(start, start + timedelta(days=8), bot_dept)
+        head = f"📅 LỊCH 7 NGÀY TỚI – {self.schedule_owner(bot_dept) if bot_dept else 'tất cả bộ phận'}"
+        body = ([self.schedule_line(r, now) + ("" if bot_dept else f" · {self.schedule_owner(r['dept'])}")
+                 for r in rows] or ["  (chưa có lịch nào)"])
+        return "\n".join([head] + body + [
+            "", "Em tự ghi lịch khi nhân viên nhắn ngày/giờ trong nhóm Zalo loại công việc (/nhom congviec …).",
+            "Thêm tay: /lich them kho mai 9h giao tủ chị Hiền · /lich xong L5 · /lich xoa L5 · /lich chuyen L5 kythuat"])
+
     def fetch_image(self, links: list[str]) -> tuple[bytes, str]:
         """Tải ảnh: thử ảnh gốc rồi ảnh thu nhỏ; link nội bộ của ZaloCRM được đổi sang địa chỉ ZaloCRM + API key."""
         base, key = getattr(self.crm, "base", ""), getattr(self.crm, "api_key", "")
@@ -460,7 +596,8 @@ class CRMBot:
             return text
         cls, tokens = groups.parse_args(args)
         if not cls or not tokens:
-            return "Cú pháp: /nhom khach 7, 8 · /nhom noibo 1, 4 · /nhom boqua 3 · /nhom xoa 5 (gõ /nhom để xem số)"
+            return ("Cú pháp: /nhom khach 7, 8 · /nhom congviec 3 · /nhom noibo 1, 4 · /nhom boqua 3 · /nhom xoa 5 "
+                    "(gõ /nhom để xem số)")
         numbered = [n for n in self.store.get_setting("nhom_list").split("\n") if n]
         all_names = [(c.get("contact") or {}).get("fullName") or "" for c in convs]
         found, missing = groups.resolve(tokens, numbered, all_names)
@@ -497,7 +634,7 @@ class CRMBot:
             return
         contact = conv.get("contact") or {}
         title = contact.get("fullName") or "?"
-        if self.is_muted_name(title) or self.group_class(title) in ("noibo", "boqua"):
+        if self.is_muted_name(title) or self.group_class(title) in ("noibo", "boqua", "congviec"):
             return
         detail = self.crm.contact(contact["id"]) if contact.get("id") else None
         created = (detail or {}).get("createdAt")
@@ -505,7 +642,8 @@ class CRMBot:
             return  # khách/nhóm cũ (chỉ là lâu không nhắn) – không báo
         if conv.get("threadType") == "group":
             self.send_report(f"🆕 NHÓM MỚI: {title}\nNhóm này dùng để làm gì? Anh xếp loại giúp em:\n"
-                             f"  /nhom khach {title}\n  /nhom noibo {title}\n  /nhom boqua {title}")
+                             f"  /nhom khach {title}\n  /nhom congviec {title} (nội bộ – em theo dõi lịch & nhắc việc)\n"
+                             f"  /nhom noibo {title} (nội bộ – không đọc)\n  /nhom boqua {title}")
         else:
             who = title + (f" ({contact['phone']})" if contact.get("phone") else "")
             first = "Shop vừa bắt đầu nhắn" if is_self else "Nhắn lần đầu"
@@ -548,7 +686,7 @@ class CRMBot:
                 continue  # cùng 1 nhóm thấy từ 2 nick shop: chỉ quét 1 lần
             done.add(k)
             if conv.get("threadType") == "group" and self.group_class(
-                    (conv.get("contact") or {}).get("fullName") or "") in ("thongtin", "noibo", "boqua"):
+                    (conv.get("contact") or {}).get("fullName") or "") in ("thongtin", "noibo", "boqua", "congviec"):
                 continue
             contact = conv.get("contact") or {}
             title, phone = contact.get("fullName") or "", contact.get("phone") or ""
@@ -884,6 +1022,8 @@ class CRMBot:
             return self.staff_command(cmd.args)
         if cmd and cmd.name == "nhom":
             return self.group_command(cmd.args)
+        if cmd and cmd.name == "lich":
+            return self.schedule_command(cmd.args, bot_dept, sender)
         if cmd and cmd.name == "boqua":
             return self.name_list_command(
                 "muted_names", cmd.args, "🔕 KHÔNG QUÉT các chat này (gia đình, bạn bè…):",
@@ -947,6 +1087,13 @@ class CRMBot:
                 self.check_unanswered()
             except Exception:  # noqa: BLE001
                 log.exception("Nhắc tin khách thất bại")
+            try:
+                self.check_schedules(now)
+                if self.agenda_time and f"{now:%H:%M}" == self.agenda_time and f"lich {now.date()}" not in sent:
+                    sent.add(f"lich {now.date()}")
+                    self.send_agenda(now)
+            except Exception:  # noqa: BLE001
+                log.exception("Nhắc lịch hẹn thất bại")
             tag = f"{now.date()} {now:%H:%M}"
             if self.meeting_time and f"{now:%H:%M}" == self.meeting_time and f"hop {tag}" not in sent:
                 sent.add(f"hop {tag}")
@@ -1094,6 +1241,8 @@ def main():
         bot.sheet = SheetWriter(os.environ["SHEET_URL"], os.environ["SHEET_TOKEN"])
     bot.work_hours = os.environ.get("WORK_HOURS", "07:00-21:00").strip()
     bot.meeting_time = os.environ.get("MEETING_TIME", "18:00").strip()  # để trống = tắt họp tự động
+    bot.schedule_minutes = int(os.environ.get("SCHEDULE_MINUTES", "60") or 60)
+    bot.agenda_time = os.environ.get("AGENDA_TIME", "07:30").strip()  # để trống = tắt lịch sáng
     # Mở cổng nhận webhook TRƯỚC: việc hỏi tên 5 bot Telegram có thể mất vài giây
     port, secret = int(os.environ.get("PORT", "8090")), os.environ.get("ZALOCRM_WEBHOOK_SECRET", "")
     threading.Thread(target=serve, args=(bot, port, secret), daemon=True).start()

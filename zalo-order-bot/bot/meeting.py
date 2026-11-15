@@ -4,7 +4,7 @@ Gọi họp bằng lời tự do: "họp công ty", "họp toàn bộ", "họp b
 Họp tự động hằng ngày (mặc định 18:00) = họp công ty.
 """
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from .db import Store, fmt_qty
 from .departments import DEPTS, parse_dept
@@ -127,6 +127,20 @@ def decisions(store: Store, now: datetime, dept: str | None = None, overdue_min:
     return out[:8]
 
 
+def tomorrow_schedule(store: Store, now: datetime, dept: str | None = None) -> str:
+    """Lịch hẹn ngày mai (đọc từ nhóm Zalo nội bộ loại công việc) để phân công trong buổi họp."""
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    rows = store.open_schedules(start, start + timedelta(days=1), dept)
+    if not rows:
+        return ""
+    lines = [f"📅 Bot Điều phối – LỊCH NGÀY MAI {start:%d/%m}:"]
+    for r in rows:
+        at = datetime.fromisoformat(r["at"])
+        owner = BOT_NAMES[r["dept"]][1] if r["dept"] in BOT_NAMES else "Điều phối"
+        lines.append(f"   • L{r['id']} {'cả ngày' if r['all_day'] else f'{at:%H:%M}'} – {owner}: “{short(r['text'], 80)}”")
+    return "\n".join(lines)
+
+
 def build_meeting(store: Store, scope: str, dept: str | None, now: datetime | None = None,
                   overdue_min: int = 30, auto: bool = False) -> list[tuple[str, str]]:
     """Danh sách (bot phát biểu, nội dung) theo thứ tự cuộc họp."""
@@ -146,6 +160,9 @@ def build_meeting(store: Store, scope: str, dept: str | None, now: datetime | No
         msgs = [(DIEUPHOI, f"🧭 Bot Điều phối: Bắt đầu HỌP BỘ PHẬN {DEPTS[dept][1].upper()} – {now:%H:%M %d/%m}. "
                            f"Mời {title} báo cáo.")]
         msgs.append((dept, dept_report(store, dept, now, detail=True, overdue_min=overdue_min)))
+    agenda = tomorrow_schedule(store, now, None if scope == COMPANY else dept)
+    if agenda:
+        msgs.append((DIEUPHOI, agenda))
     todo = decisions(store, now, None if scope == COMPANY else dept, overdue_min)
     closing = ("🧭 Bot Điều phối – CẦN ANH QUYẾT:\n" + "\n".join(f"   {i}. {t}" for i, t in enumerate(todo, 1))
                if todo else "🧭 Bot Điều phối: Không có việc nào cần anh quyết. ✅")

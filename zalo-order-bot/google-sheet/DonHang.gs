@@ -1,10 +1,15 @@
 // Google Sheet ĐƠN HÀNG: Bot Điều phối ghi đơn đã duyệt (nhóm Zalo "CHỐT ĐƠN" -> nháp Telegram -> "ok").
 // Cài: mở Sheet đơn hàng -> Tiện ích mở rộng -> Apps Script -> dán toàn bộ file này -> đổi TOKEN -> Lưu
 //      -> Triển khai -> Tùy chọn triển khai mới -> Ứng dụng web (Thực thi: Tôi · Truy cập: Bất kỳ ai) -> Triển khai.
-// Trang: ĐƠN HÀNG (1 dòng/đơn) · CHI TIẾT ĐƠN (1 dòng/món) · THU TIỀN (1 dòng/lần thu) · KHO (danh mục + tồn)
+// Trang: KHÁCH HÀNG (1 dòng/khách) · ĐƠN HÀNG (1 dòng/đơn) · CHI TIẾT ĐƠN (1 dòng/món) · THU TIỀN (1 dòng/lần thu)
+//        · KHO (danh mục + tồn). Trang nào chưa có thì tự tạo; muốn tạo ngay: chọn hàm caiDat -> Chạy.
+// Link /exec này dùng được cho CẢ nhóm Zalo THÔNG TIN KHÁCH HÀNG (dán vào câu hỏi Sheet thông tin khách).
 const TOKEN = 'DOI-THANH-MA-BI-MAT';  // mật khẩu do anh tự đặt, không dấu, không khoảng trắng, giữ kín
 
 const HEADERS = {
+  'KHÁCH HÀNG': ['STT', 'Ngày thêm', 'Tên khách hàng', 'SĐT', 'Địa chỉ', 'Ghi chú', 'Người gửi', 'Nguồn', 'Trạng thái',
+                 'Link ảnh gốc', 'Mã tin Zalo', 'Mã đơn', 'Tổng tiền đơn', 'Đã cọc / đã thu', 'Ngày cọc',
+                 'Còn phải thu', 'Trạng thái đơn'],
   'ĐƠN HÀNG': ['Mã đơn', 'Ngày lên đơn', 'Khách hàng', 'SĐT', 'Địa chỉ', 'Ngày giao dự kiến', 'Tổng trước giảm',
                'Giảm giá', 'Tổng chốt', 'Cọc / đã thu trước', 'Ngày cọc', 'Thu lần này', 'Đã thu', 'Còn phải thu',
                'Trạng thái', 'Hàng riêng chờ khảo sát/báo giá', 'Ghi chú', 'Người gửi', 'Link ảnh', 'Mã tin Zalo',
@@ -20,12 +25,14 @@ function doPost(e) {
   const body = JSON.parse(e.postData.contents);
   if (body.token !== TOKEN) return json({ ok: false, error: 'Sai mã bí mật' });
   if (body.action === 'products') return json({ ok: true, products: products() });
-  if (body.action === 'order') {
-    const lock = LockService.getScriptLock();
-    lock.waitLock(20000);
-    try { return json(saveOrder(body.order || {})); } finally { lock.releaseLock(); }
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    if (body.action === 'order') return json(saveOrder(body.order || {}));
+    return json(saveCustomer(body));  // tin từ nhóm THÔNG TIN KHÁCH HÀNG
+  } finally {
+    lock.releaseLock();
   }
-  return json({ ok: false, error: 'Không rõ việc cần làm' });
 }
 
 function sheet(name) {
@@ -38,6 +45,58 @@ function sheet(name) {
     sh.getRange(1, 1, 1, HEADERS[name].length).setFontWeight('bold');
   }
   return sh;
+}
+
+function caiDat() { Object.keys(HEADERS).forEach(sheet); }  // chạy 1 lần: tạo đủ các trang
+
+function cleanPhone(v) {
+  let p = String(v || '').replace(/\D/g, '');
+  if (p.startsWith('84') && p.length === 11) p = '0' + p.slice(2);
+  return p;
+}
+
+function findCustomer(sh, phone) {
+  const last = sh.getLastRow();
+  if (!phone || last < 2) return -1;
+  const phones = sh.getRange(2, 4, last - 1, 1).getDisplayValues().map(r => String(r[0]).replace(/\D/g, ''));
+  const i = phones.indexOf(phone);
+  return i < 0 ? -1 : i + 2;
+}
+
+function nextStt(sh) {
+  const last = sh.getLastRow();
+  return last < 2 ? 1 : Math.max(...sh.getRange(2, 1, last - 1, 1).getValues().map(r => Number(r[0]) || 0)) + 1;
+}
+
+function saveCustomer(b) {
+  const sh = sheet('KHÁCH HÀNG');
+  const phone = cleanPhone(b.phone);
+  const row = findCustomer(sh, phone);
+  if (row > 0) return { ok: true, duplicate: true, row: row, stt: sh.getRange(row, 1).getValue() };
+  const stt = nextStt(sh);
+  const now = Utilities.formatDate(new Date(), 'Asia/Ho_Chi_Minh', 'dd/MM/yyyy HH:mm');
+  sh.appendRow([stt, b.date || now, txt(b.name), phone ? "'" + phone : '', txt(b.address), txt(b.note), txt(b.sender),
+                txt(b.source), txt(b.status), txt(b.image), txt(b.msgId)]);
+  return { ok: true, row: sh.getLastRow(), stt: stt };
+}
+
+// Đơn đã duyệt -> cập nhật khách (chưa có thì thêm): mã đơn, tổng tiền, đã cọc/đã thu, còn phải thu (cộng dồn)
+function updateCustomerFromOrder(o, code, now) {
+  const sh = sheet('KHÁCH HÀNG');
+  const phone = cleanPhone(o.phone);
+  let row = findCustomer(sh, phone);
+  if (row < 0) {
+    sh.appendRow([nextStt(sh), now, txt(o.customer), phone ? "'" + phone : '', txt(o.address), '', txt(o.sender),
+                  'Đơn hàng', 'Đủ thông tin', txt(o.image), txt(o.msgId)]);
+    row = sh.getLastRow();
+  }
+  const cur = sh.getRange(row, 12, 1, 6).getValues()[0];
+  const codes = String(cur[0] || '').split(',').map(c => c.trim()).filter(String);
+  codes.push(code);
+  const paid = num(cur[2]) + (o.paid || 0);
+  sh.getRange(row, 12, 1, 6).setValues([[codes.join(', '), num(cur[1]) + (o.total || 0), paid,
+                                          o.paidBeforeDate || cur[3] || '', num(cur[4]) + (o.left || 0),
+                                          paid ? 'Đã chốt' : o.status]]);
 }
 
 function products() {
@@ -69,11 +128,13 @@ function saveOrder(o) {
                                    o.paidBefore, 'Cọc / đã thu trước', '', now]);
   if (o.payNow) pay.appendRow([Utilities.formatDate(new Date(), 'Asia/Ho_Chi_Minh', 'dd/MM/yyyy'), code,
                                txt(o.customer), phone ? "'" + phone : '', o.payNow, 'Thanh toán', '', now]);
-  return { ok: true, code: code, row: orders.getLastRow() };
+  const row = orders.getLastRow();
+  updateCustomerFromOrder(o, code, now);
+  return { ok: true, code: code, row: row };
 }
 
 // Ô bắt đầu bằng = + - @ bị hiểu là công thức -> thêm dấu ' để giữ là chữ
 function txt(v) { v = v == null ? '' : String(v); return /^[=+\-@]/.test(v) ? "'" + v : v; }
 function num(v) { return typeof v === 'number' ? v : Number(String(v).replace(/[^\d]/g, '')) || 0; }
-function doGet() { return json({ ok: true, message: 'Sheet đơn hàng sẵn sàng' }); }
+function doGet() { return json({ ok: true, message: 'Sheet đơn hàng + khách hàng sẵn sàng' }); }
 function json(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }

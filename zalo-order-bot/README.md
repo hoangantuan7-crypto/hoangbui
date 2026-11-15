@@ -151,8 +151,10 @@ Tin nào có hẹn ngày hoặc giờ thì Bot Điều phối ghi thành lịch 
 
 ### Nhóm "CHỐT ĐƠN" → nháp đơn trong Telegram → Google Sheet đơn hàng
 
-1. Tạo Google Sheet đơn hàng có 4 trang: ĐƠN HÀNG, CHI TIẾT ĐƠN, THU TIỀN, KHO (mã SP, tên, ĐVT, giá bán, phân loại,
-   tồn). Mở **Tiện ích mở rộng → Apps Script**, dán `google-sheet/DonHang.gs`, đổi `TOKEN`, rồi **Triển khai →
+1. Tạo Google Sheet đơn hàng có các trang: KHÁCH HÀNG, ĐƠN HÀNG, CHI TIẾT ĐƠN, THU TIỀN, KHO (mã SP, tên, ĐVT,
+   giá bán, phân loại, tồn). Trang chưa có thì Apps Script tự tạo (hoặc chạy hàm `caiDat` một lần).
+   Trang KHÁCH HÀNG nhận cả tin từ nhóm THÔNG TIN KHÁCH HÀNG (dán cùng link `/exec` + mã vào câu hỏi Sheet thông tin
+   khách) và tự cập nhật mã đơn, tổng tiền, đã cọc, còn phải thu khi đơn được duyệt (theo số điện thoại). Mở **Tiện ích mở rộng → Apps Script**, dán `google-sheet/DonHang.gs`, đổi `TOKEN`, rồi **Triển khai →
    Ứng dụng web** (Thực thi: Tôi · Truy cập: Bất kỳ ai). Chạy lại script cài đặt, dán link `/exec` và mã bí mật.
 2. Lập nhóm Zalo tên bắt đầu bằng **CHỐT ĐƠN** (bot tự nhận ra). Gửi ảnh phiếu xuất kho, phiếu giao hàng & công nợ,
    giấy ghi tay, hoặc gõ đơn.

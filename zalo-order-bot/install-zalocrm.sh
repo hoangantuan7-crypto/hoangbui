@@ -17,6 +17,7 @@
 #   STAFF_NAMES      tên Zalo nhân viên, cách nhau dấu phẩy
 #   ANTHROPIC_API_KEY  khóa Claude để đọc ảnh chụp giấy/chữ viết tay (bỏ trống = OCR miễn phí)
 #   SHEET_URL / SHEET_TOKEN  link Apps Script + mã bí mật của Google Sheet thông tin khách
+#   ORDER_SHEET_URL / ORDER_SHEET_TOKEN  link Apps Script + mã bí mật của Google Sheet ĐƠN HÀNG (DonHang.gs)
 #   TELEGRAM_TOKEN   token bot Telegram (từ @BotFather) – có token thì bot chỉ ĐỌC Zalo, báo qua Telegram
 set -euo pipefail
 
@@ -193,6 +194,28 @@ if [ -n "$SHEET_URL" ]; then
   fi
 fi
 
+say "Google Sheet ĐƠN HÀNG (nhóm Zalo CHỐT ĐƠN -> nháp Telegram -> duyệt -> Sheet)"
+CUR_OSHEET=$(env_get ORDER_BOT_ORDER_SHEET_URL)
+if [ -n "$CUR_OSHEET" ]; then H="Enter = giữ link cũ"; else H="Enter = bỏ qua"; fi
+ORDER_SHEET_URL=$(ask "Dán URL Apps Script của Sheet đơn hàng ($H): " ORDER_SHEET_URL "$CUR_OSHEET")
+ORDER_SHEET_URL=$(printf '%s' "$ORDER_SHEET_URL" | tr -d '[:space:]')
+CUR_OTOKEN=$(env_get ORDER_BOT_ORDER_SHEET_TOKEN)
+ORDER_SECRET=""
+if [ -n "$ORDER_SHEET_URL" ]; then
+  case "$ORDER_SHEET_URL" in https://script.google.com/*/exec) ;; *) die "Link không đúng dạng https://script.google.com/macros/s/…/exec";; esac
+  if [ -n "$CUR_OTOKEN" ]; then H="Enter = giữ mã cũ"; else H="mã anh đặt ở dòng TOKEN của DonHang.gs"; fi
+  T=$(ask_secret "Mã bí mật của Sheet đơn hàng ($H, chữ sẽ không hiện khi dán): " ORDER_SHEET_TOKEN "$CUR_OTOKEN")
+  ORDER_SECRET=$(printf '%s' "$T" | tr -d '[:space:]')
+  [ -n "$ORDER_SECRET" ] || die "Cần mã bí mật (dòng const TOKEN = '...' trong DonHang.gs)."
+  # Thử lấy danh mục kho (chỉ đọc): đúng link + đúng mã thì Sheet trả về "ok":true
+  if curl -fsSL --max-time 30 -H "Content-Type: application/json" \
+       -d "{\"action\":\"products\",\"token\":\"$ORDER_SECRET\"}" "$ORDER_SHEET_URL" 2>/dev/null | grep -q '"ok":true'; then
+    echo "OK – Sheet đơn hàng sẵn sàng, đọc được trang KHO."
+  else
+    echo "⚠️  Chưa gọi được Sheet đơn hàng (kiểm tra Triển khai: Truy cập = Bất kỳ ai, và mã bí mật). Bot vẫn cài tiếp."
+  fi
+fi
+
 say "AI đọc ảnh chụp giấy, chữ viết tay (Claude Haiku – tùy chọn, tính phí theo ảnh)"
 CUR_AI=$(env_get ANTHROPIC_API_KEY)
 if [ -n "$CUR_AI" ]; then H="Enter = giữ khóa cũ"; else H="Enter = bỏ qua, đọc ảnh bằng OCR miễn phí"; fi
@@ -231,6 +254,8 @@ env_set ORDER_BOT_SHOP_NAMES "$SHOP_NAMES"
 env_set ORDER_BOT_STAFF_NAMES "$STAFF"
 env_set ORDER_BOT_SHEET_URL "$SHEET_URL"
 env_set ORDER_BOT_SHEET_TOKEN "$SHEET_SECRET"
+env_set ORDER_BOT_ORDER_SHEET_URL "$ORDER_SHEET_URL"
+env_set ORDER_BOT_ORDER_SHEET_TOKEN "$ORDER_SECRET"
 env_set ANTHROPIC_API_KEY "$AI_KEY"
 env_set ORDER_BOT_SHOP_UIDS "$SHOP_UIDS"
 grep -qE "^ORDER_BOT_REPLY_MINUTES=" .env || env_set ORDER_BOT_REPLY_MINUTES "15"

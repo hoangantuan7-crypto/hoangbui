@@ -72,6 +72,10 @@ class DraftTest(unittest.TestCase):
         self.assertIn("🛠 Dòng 5 hàng riêng chờ khảo sát", text)
         self.assertIn("em lấy giá kho 2.350.000", text)
         self.assertIn("Còn lại 9.000.000", text)
+        preview = render(3, d, catalog=self.cat)
+        self.assertIn("• KHÁCH HÀNG: CHỊ HƯƠNG - CHỢ BỘNG · 0362016908", preview)
+        self.assertIn("• THU TIỀN: cọc 5.000.000 (06/10/2026)", preview)
+        self.assertIn("H-2200V đặt 2, tồn 0 → cần nhập 2", preview)
 
     def test_edits(self):
         action, bad = apply_edits(self.draft, "2 sl 1\n4 gia 2.400.000\nxoa 3\nthem H-B1639 1 850k\n"
@@ -123,7 +127,9 @@ class FakeOrderSheet:
 
     def save_order(self, order):
         self.saved.append(order)
-        return {"ok": True, "code": f"D{len(self.saved)}"}
+        return {"ok": True, "code": f"D{len(self.saved)}", "items": len(order["items"]), "payments": 1,
+                "customer": {"isNew": True, "stt": 7},
+                "stock": [{"code": "H-2200V", "stock": 0, "ordered": 2, "need": 2, "isNew": False}]}
 
 
 class OrderGroupFlowTest(unittest.TestCase):
@@ -170,6 +176,10 @@ class OrderGroupFlowTest(unittest.TestCase):
         self.assertIn("ĐÃ LÊN ĐƠN D1", sale_msg)
         self.assertEqual(alert_level(sale_msg), XANH)
         self.assertIn("KẾ TOÁN – ĐÃ THU – D1", self.d["ketoan"].to(ROOM)[0])
+        self.assertIn("• KHÁCH HÀNG: thêm khách mới (STT 7)", sale_msg)
+        self.assertIn("• KHO: H-2200V khách đặt 2, tồn 0 → cần nhập 2", sale_msg)
+        self.assertIn("KHO – CẦN NHẬP HÀNG – đơn D1", self.d["kho"].to(ROOM)[0])
+        self.assertIn("📋 Khi anh trả lời", text)
         self.assertTrue(any("GHI LỊCH" in t and "Hàng riêng đơn D1" in t for t in self.d["sale"].to(ROOM)))
         self.assertIn("đã lên Sheet thành đơn D1", self.bot.handle_telegram(ROOM, "N1 ok", "Anh"))
 

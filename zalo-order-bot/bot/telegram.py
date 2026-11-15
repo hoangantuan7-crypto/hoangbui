@@ -38,7 +38,7 @@ def split_text(text: str, limit: int = MAX_TEXT) -> list[str]:
 DO, VANG, XANH = "do", "vang", "xanh"
 ICONS = {DO: "🔴", VANG: "🟡", XANH: "🟢"}
 GREEN_WORDS = ("ĐÃ LÊN ĐƠN", "ĐÃ THU", "ĐÃ BỎ NHÁP")
-YELLOW_WORDS = ("NHÁP ĐƠN", "CẦN KIỂM TRA", "không đọc được số điện thoại", "Không tải/đọc được",
+YELLOW_WORDS = ("NHÁP ĐƠN", "CẦN NHẬP HÀNG", "CẦN KIỂM TRA", "không đọc được số điện thoại", "Không tải/đọc được",
                 "không lấy được link ảnh", "không đọc được phiếu")
 RED_WORDS = ("CHƯA ĐƯỢC GIẢI ĐÁP", "KHÁCH ĐANG CHỜ ANH TRẢ LỜI", "NHẮC LẦN 2", "CHƯA XỬ LÝ (quá",
              "không đọc được tin Zalo", "không nhắn được", "KHÔNG LÊN ĐƯỢC SHEET")

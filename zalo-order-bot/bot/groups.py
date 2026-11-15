@@ -3,6 +3,7 @@
 Loại nhóm:
   khach  – nhóm khách hàng / công trình: luôn theo dõi (báo việc, nhắc trả lời)
   noibo  – nhóm nội bộ của shop: KHÔNG đọc
+  congviec – nhóm nội bộ làm việc: Bot Điều phối đọc lịch hẹn (ngày/giờ), giao bộ phận, nhắc trước giờ hẹn
   boqua  – nhóm không liên quan (CLB, gia đình…): KHÔNG đọc
 Nhóm chưa xếp loại: theo chế độ SCAN_GROUPS; nhóm mới -> Bot Điều phối hỏi anh xếp loại.
 
@@ -18,11 +19,13 @@ from .text import norm
 CLASSES = {
     "khach": ("🏠", "khách hàng – theo dõi"),
     "noibo": ("👥", "nội bộ – không đọc"),
+    "congviec": ("📋", "nội bộ – theo dõi lịch & nhắc việc"),
     "boqua": ("🔕", "bỏ qua – không đọc"),
     "thongtin": ("📇", "thông tin khách – ghi vào Google Sheet"),
 }
 INFO_PREFIX = "thong tin khach hang"  # nhóm tên "THÔNG TIN KHÁCH HÀNG…" tự là nhóm thông tin khách
 CLASS_WORDS = [("khach hang", "khach"), ("khach", "khach"), ("noi bo", "noibo"), ("noibo", "noibo"),
+               ("cong viec", "congviec"), ("congviec", "congviec"), ("nhac lich", "congviec"), ("lich", "congviec"),
                ("bo qua", "boqua"), ("boqua", "boqua"), ("thong tin", "thongtin"), ("thongtin", "thongtin"),
                ("xoa", "xoa"), ("bo xep", "xoa")]
 
@@ -103,6 +106,7 @@ def listing(store, groups: list[dict]) -> tuple[str, list[str]]:
         lines.append(f"{i:>2}. {icon} {name} – {label}")
         if cls is None and norm(name).startswith(INFO_PREFIX):
             lines[-1] = f"{i:>2}. {CLASSES['thongtin'][0]} {name} – {CLASSES['thongtin'][1]}"
-    lines += ["", "Xếp loại: /nhom khach 7, 8 · /nhom noibo 1, 4 · /nhom boqua 3 · /nhom thongtin 6 · /nhom xoa 5",
+    lines += ["", "Xếp loại: /nhom khach 7, 8 · /nhom congviec 3 · /nhom noibo 1, 4 · /nhom boqua 3 · "
+              "/nhom thongtin 6 · /nhom xoa 5",
               "(dùng số ở trên hoặc tên nhóm)"]
     return "\n".join(lines), names

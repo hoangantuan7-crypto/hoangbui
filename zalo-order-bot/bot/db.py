@@ -69,6 +69,18 @@ CREATE TABLE IF NOT EXISTS known_convs (       -- cuộc trò chuyện bot đã 
     conv_key TEXT PRIMARY KEY,
     first_seen TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS schedules (        -- lịch hẹn đọc từ nhóm Zalo nội bộ (giờ Việt Nam)
+    id INTEGER PRIMARY KEY,
+    at TEXT NOT NULL,                          -- thời điểm hẹn; cả ngày = 00:00
+    all_day INTEGER NOT NULL DEFAULT 0,
+    dept TEXT,                                 -- bộ phận phụ trách, NULL = Bot Điều phối
+    text TEXT NOT NULL,
+    sender TEXT DEFAULT '',
+    source TEXT DEFAULT '',                    -- tên nhóm Zalo hoặc "Telegram"
+    created_at TEXT NOT NULL,
+    remind_level INTEGER NOT NULL DEFAULT 0,   -- 1 = đã nhắc trước giờ, 2 = đã nhắc đúng giờ / đã báo trong lịch sáng
+    status TEXT NOT NULL DEFAULT 'open'        -- open | done | deleted
+);
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -402,6 +414,44 @@ class Store:
                               [(k, now_iso()) for k in keys])
         self.conn.commit()
         return self.conn.execute("SELECT COUNT(*) n FROM known_convs").fetchone()["n"] - before
+
+    # ---------- lịch hẹn nội bộ ----------
+    def add_schedule(self, at: datetime, all_day: bool, dept: str | None, text: str, sender: str = "",
+                     source: str = "", level: int = 0) -> tuple[int, bool]:
+        """Ghi lịch. Cùng giờ + cùng nội dung (nhóm thấy từ 2 nick) -> không ghi trùng. Trả về (mã, mới?)."""
+        at_s = at.replace(second=0, microsecond=0).isoformat()
+        row = self.conn.execute("SELECT id FROM schedules WHERE at=? AND text=? AND status='open'",
+                                (at_s, text)).fetchone()
+        if row:
+            return row["id"], False
+        cur = self.conn.execute(
+            "INSERT INTO schedules(at, all_day, dept, text, sender, source, created_at, remind_level) "
+            "VALUES (?,?,?,?,?,?,?,?)", (at_s, int(all_day), dept, text, sender, source, now_iso(), level))
+        self.conn.commit()
+        return cur.lastrowid, True
+
+    def get_schedule(self, sid: int):
+        return self.conn.execute("SELECT * FROM schedules WHERE id=?", (sid,)).fetchone()
+
+    def open_schedules(self, start: datetime, end: datetime, dept: str | None = None):
+        """Lịch còn mở trong khoảng [start, end), dept=None: tất cả."""
+        sql = "SELECT * FROM schedules WHERE status='open' AND at>=? AND at<?"
+        params = [start.isoformat(), end.isoformat()]
+        if dept:
+            sql += " AND dept=?"
+            params.append(dept)
+        return self.conn.execute(sql + " ORDER BY at, id", params).fetchall()
+
+    def set_schedule(self, sid: int, level: int | None = None, status: str | None = None,
+                     dept: str | None = None) -> bool:
+        if dept:
+            cur = self.conn.execute("UPDATE schedules SET dept=? WHERE id=? AND status='open'", (dept, sid))
+        elif status:
+            cur = self.conn.execute("UPDATE schedules SET status=? WHERE id=? AND status='open'", (status, sid))
+        else:
+            cur = self.conn.execute("UPDATE schedules SET remind_level=? WHERE id=?", (level, sid))
+        self.conn.commit()
+        return cur.rowcount > 0
 
     # ---------- cài đặt ----------
     def get_setting(self, key: str, default: str = "") -> str:

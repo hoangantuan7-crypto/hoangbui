@@ -111,16 +111,32 @@ nhất. Tin mới thì bot vẫn bắt đủ, vì chat vừa có tin luôn nằm
 ### Xếp loại nhóm Zalo, khách mới, nhóm mới
 
 - `/nhom`: xem các nhóm Zalo kèm số thứ tự và loại. Nhóm có cả 2 nick shop ở trong chỉ hiện một lần.
-- `/nhom khach 7, 8` · `/nhom noibo 1, 4` · `/nhom boqua 3` · `/nhom xoa 5`: xếp loại theo số thứ tự hoặc theo tên
+- `/nhom khach 7, 8` · `/nhom congviec 3` · `/nhom noibo 1, 4` · `/nhom boqua 3` · `/nhom xoa 5`: xếp loại theo số thứ tự hoặc theo tên
   nhóm. Gõ phần đầu tên cũng được.
   - 🏠 **khách**: luôn theo dõi (báo việc, nhắc trả lời), không phụ thuộc `SCAN_GROUPS`.
+  - 📋 **công việc**: nhóm nội bộ mà Bot Điều phối theo dõi lịch hẹn và nhắc việc (xem mục dưới).
   - 👥 **nội bộ** và 🔕 **bỏ qua**: bot không đọc.
   - Nhóm chưa xếp loại thì bot xử lý theo `SCAN_GROUPS`.
 - 🆕 **Khách mới**: người lần đầu nhắn shop (ZaloCRM thấy họ trong 3 ngày gần đây). Bot báo tên, SĐT và tin đầu tiên.
-- 🆕 **Nhóm mới**: shop vừa vào một nhóm. Bot báo kèm sẵn 3 lệnh xếp loại để anh bấm.
+- 🆕 **Nhóm mới**: shop vừa vào một nhóm. Bot báo kèm sẵn các lệnh xếp loại để anh bấm.
 - Khách cũ lâu không nhắn rồi quay lại thì bot không báo là khách mới. Lần đầu chạy, bot ghi nhận mọi cuộc trò chuyện
   đang có mà không báo gì.
 - Một nhóm có 2 nick shop ở trong thì ZaloCRM ghi mỗi tin 2 lần; bot gộp lại nên chỉ báo một lần.
+
+### Nhóm nội bộ "công việc": lịch hẹn và nhắc việc
+
+Xếp nhóm nội bộ vào loại này: `/nhom congviec 3, 6`. Tin nhân viên nhắn trong nhóm **không** bị coi là tin khách.
+Tin nào có hẹn ngày hoặc giờ thì Bot Điều phối ghi thành lịch `L<mã>` và giao cho bộ phận phụ trách:
+
+- Bot hiểu: "9h sáng mai giao tủ chị Hiền", "14h30 thứ 7 lắp gương nhà anh Tùng", "20/11 8h khảo sát",
+  "chiều nay 3h qua kho lấy hàng", "mốt 9g30 ship", "ngày 25 thu tiền công trình" (cả ngày).
+- Chọn bộ phận theo nội dung: giao/xe/lấy hàng → Kho, lắp/sửa/bảo hành/khảo sát → Kỹ thuật, thu tiền/cọc → Kế toán,
+  báo giá/khách → Sale, còn lại → Bot Điều phối.
+- Bot bộ phận báo "📅 GHI LỊCH" ngay trong phòng điều phối, nhắc **trước 60 phút** (`SCHEDULE_MINUTES`) và **đúng giờ**.
+- **07:30** (`AGENDA_TIME`) mỗi bộ phận nhận lịch hôm nay. Họp công ty 18:00 có thêm **lịch ngày mai**.
+- Lệnh `/lich` ở mọi bot: `/lich` (7 ngày tới) · `/lich them kho mai 9h giao tủ chị Hiền` · `/lich xong L5` ·
+  `/lich xoa L5` · `/lich chuyen L5 kythuat`.
+- Tin không có ngày/giờ (trò chuyện thường) thì bot bỏ qua. Bot đọc sai thì `/lich xoa L<mã>`.
 
 ### Nhóm "THÔNG TIN KHÁCH HÀNG" → Google Sheet
 

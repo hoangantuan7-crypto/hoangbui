@@ -656,7 +656,7 @@ class CRMBot:
     def post_draft(self, draft_id: int, chat_id: str | None = None, botname: str | None = None, note: str = ""):
         """Hiện nháp: lần đầu -> Bot Sale (phòng điều phối hoặc chat của Sale); sau khi sửa -> ngay chat đang sửa."""
         row, draft = self.store.get_draft(draft_id)
-        text = render(draft_id, draft, row["sender"]) + (f"\n\n{note}" if note else "")
+        text = render(draft_id, draft, row["sender"], catalog=self.catalog()) + (f"\n\n{note}" if note else "")
         if not self.tg:
             self.send_report(text, "sale")
             return
@@ -711,8 +711,25 @@ class CRMBot:
         sub, total, paid, left = totals(draft)
         who = (draft.get("customer") or "?") + (f" · {draft['phone']}" if draft.get("phone") else "")
         approver = f" · duyệt: {sender}" if sender else ""
+        cust = res.get("customer") or {}
+        done = [f"• KHÁCH HÀNG: {'thêm khách mới' if cust.get('isNew') else 'cập nhật khách'}"
+                + (f" (STT {cust['stt']})" if cust.get("stt") else ""),
+                f"• ĐƠN HÀNG: {code} – {'Đã chốt' if paid else 'Chưa cọc'}",
+                f"• CHI TIẾT ĐƠN: {res.get('items', len(draft['items']))} dòng",
+                f"• THU TIỀN: {res.get('payments', 0)} dòng" + (f" ({vnd(paid)})" if paid else "")]
+        stock = res.get("stock") or []
+        if stock:
+            done.append("• KHO: " + "; ".join(
+                f"{s['code']}{' (mã mới – cần kiểm tra)' if s.get('isNew') else ''} khách đặt {s['ordered']:g}, "
+                f"tồn {s['stock']:g}" + (f" → cần nhập {s['need']:g}" if s.get("need") else "") for s in stock))
         self.tell("sale", f"🛒 SALE – ĐÃ LÊN ĐƠN {code} – N{draft_id}\n👤 {who}\n💵 Tổng chốt {vnd(total)} · "
-                          f"{len(draft['items'])} món · Còn phải thu {vnd(left)}{approver}")
+                          f"{len(draft['items'])} món · Còn phải thu {vnd(left)}{approver}\n📋 Đã ghi Sheet:\n"
+                          + "\n".join(done))
+        short_stock = [s for s in stock if s.get("need")]
+        if short_stock:
+            self.tell("kho", "📦 KHO – CẦN NHẬP HÀNG – đơn " + code + "\n" + "\n".join(
+                f"• {s['code']}: khách đặt {s['ordered']:g}, tồn {s['stock']:g} → cần nhập {s['need']:g}"
+                for s in short_stock))
         if paid:
             parts = []
             if draft.get("paid_before"):

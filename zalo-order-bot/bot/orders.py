@@ -221,7 +221,37 @@ def checks(draft: dict) -> list[str]:
     return out
 
 
-def render(draft_id: int, draft: dict, sender: str = "", title: str = "NHÁP ĐƠN") -> str:
+def sheet_preview(draft: dict, catalog: Catalog | None = None) -> list[str]:
+    """Những gì sẽ ghi vào 5 trang của Sheet khi anh trả lời "ok" (để anh xem trước trên Telegram)."""
+    sub, total, paid, left = totals(draft)
+    who = (draft.get("customer") or "(chưa có tên)") + (f" · {draft['phone']}" if draft.get("phone") else "")
+    pays = []
+    if draft.get("paid_before"):
+        pays.append(f"cọc {vnd(draft['paid_before'])}"
+                    + (f" ({draft['paid_before_date']})" if draft.get("paid_before_date") else ""))
+    if draft.get("pay_now"):
+        pays.append(f"thanh toán {vnd(draft['pay_now'])}")
+    stock = []
+    for it in draft["items"]:
+        if it["kind"] == "rieng" or not it.get("code"):
+            continue
+        prod = catalog.match(it["code"])[0] if catalog else None
+        if prod is None:
+            stock.append(f"{it['code']} (mã mới, thêm vào KHO)")
+            continue
+        have = int(prod.get("stock") or 0)
+        need = max(0, round(it["qty"]) - have)
+        stock.append(f"{prod['code']} đặt {it['qty']:g}, tồn {have}" + (f" → cần nhập {need}" if need else " ✅ đủ"))
+    return ["📋 Khi anh trả lời \"ok\", em ghi vào Sheet:",
+            f"• KHÁCH HÀNG: {who} (chưa có thì thêm mới, có rồi thì cập nhật theo SĐT)",
+            f"• ĐƠN HÀNG: 1 đơn mới – tổng chốt {vnd(total)} – {'Đã chốt' if paid else 'Chưa cọc'}",
+            f"• CHI TIẾT ĐƠN: {len(draft['items'])} dòng",
+            "• THU TIỀN: " + (" + ".join(pays) if pays else "chưa có tiền thu"),
+            "• KHO: " + ("; ".join(stock) if stock else "không có mã cần theo dõi")]
+
+
+def render(draft_id: int, draft: dict, sender: str = "", title: str = "NHÁP ĐƠN",
+           catalog: Catalog | None = None) -> str:
     sub, total, paid, left = totals(draft)
     lines = [f"🛒 SALE – {title} – N{draft_id}",
              f"👤 {draft.get('customer') or '(chưa có tên)'}" + (f" · {draft['phone']}" if draft.get("phone") else "")]
@@ -258,6 +288,7 @@ def render(draft_id: int, draft: dict, sender: str = "", title: str = "NHÁP Đ�
     if sender:
         lines.append(f"👤 Gửi: {sender}")
     if title == "NHÁP ĐƠN":
+        lines += [""] + sheet_preview(draft, catalog)
         lines += ["", "✏️ Sửa: TRẢ LỜI (reply) tin này, mỗi dòng 1 lệnh:",
                   "3 sl 2 · 3 gia 1460000 · 3 ma H-2200V · xoa 4 · them H-B1639 1 850k · rieng 9 · tang 4",
                   "khach … · sdt … · dc … · giao 20/11 · coc 5tr 06/10 · thu 16tr6 · giam 2120000 · ghichu …",

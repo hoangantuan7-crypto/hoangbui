@@ -18,7 +18,7 @@ const HEADERS = {
                    'Ghi chú', 'Khớp kho', 'Khách hàng'],
   'THU TIỀN': ['Ngày', 'Mã đơn', 'Khách hàng', 'SĐT', 'Số tiền', 'Nội dung', 'Ghi chú', 'Lúc ghi'],
   'KHO': ['Mã SP', 'Tên sản phẩm', 'ĐVT', 'Giá bán', 'Bảo hành', 'Phân loại hàng', 'Hàng riêng của khách',
-          'Tồn', 'Tồn tối thiểu', 'Ghi chú'],
+          'Tồn', 'Tồn tối thiểu', 'Ghi chú', 'Khách đặt chưa giao', 'Cần nhập thêm'],
 };
 
 function doPost(e) {
@@ -43,6 +43,10 @@ function sheet(name) {
     sh.appendRow(HEADERS[name]);
     sh.setFrozenRows(1);
     sh.getRange(1, 1, 1, HEADERS[name].length).setFontWeight('bold');
+  }
+  const have = sh.getLastColumn();
+  if (have < HEADERS[name].length) {  // trang cũ thiếu cột mới -> thêm tiêu đề cột
+    sh.getRange(1, have + 1, 1, HEADERS[name].length - have).setValues([HEADERS[name].slice(have)]).setFontWeight('bold');
   }
   return sh;
 }
@@ -85,7 +89,8 @@ function updateCustomerFromOrder(o, code, now) {
   const sh = sheet('KHÁCH HÀNG');
   const phone = cleanPhone(o.phone);
   let row = findCustomer(sh, phone);
-  if (row < 0) {
+  const isNew = row < 0;
+  if (isNew) {
     sh.appendRow([nextStt(sh), now, txt(o.customer), phone ? "'" + phone : '', txt(o.address), '', txt(o.sender),
                   'Đơn hàng', 'Đủ thông tin', txt(o.image), txt(o.msgId)]);
     row = sh.getLastRow();
@@ -97,6 +102,35 @@ function updateCustomerFromOrder(o, code, now) {
   sh.getRange(row, 12, 1, 6).setValues([[codes.join(', '), num(cur[1]) + (o.total || 0), paid,
                                           o.paidBeforeDate || cur[3] || '', num(cur[4]) + (o.left || 0),
                                           paid ? 'Đã chốt' : o.status]]);
+  return { row: row, isNew: isNew, stt: sh.getRange(row, 1).getValue() };
+}
+
+function codeKey(c) { return String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); }
+
+// Đơn đã duyệt -> KHO: cộng "Khách đặt chưa giao", tính "Cần nhập thêm" = đặt - tồn; mã chưa có thì thêm dòng mới
+function updateStock(o, code) {
+  const sh = sheet('KHO');
+  const last = sh.getLastRow();
+  const keys = last < 2 ? [] : sh.getRange(2, 1, last - 1, 1).getValues().map(r => codeKey(r[0]));
+  const out = [];
+  (o.items || []).forEach(it => {
+    if (!it.code || it.kind === 'Hàng riêng') return;  // hàng riêng đặt làm theo khách: không theo dõi tồn
+    let i = keys.indexOf(codeKey(it.code));
+    const isNew = i < 0;
+    if (isNew) {
+      sh.appendRow([txt(it.code), txt(it.name), txt(it.unit), it.price, '', 'Hàng thông thường', '', 0, 0,
+                    'Mã mới từ đơn ' + code + ' – cần kiểm tra', 0, 0]);
+      keys.push(codeKey(it.code));
+      i = keys.length - 1;
+    }
+    const r = i + 2;
+    const v = sh.getRange(r, 8, 1, 5).getValues()[0];  // Tồn, Tồn tối thiểu, Ghi chú, Đặt chưa giao, Cần nhập
+    const ordered = num(v[3]) + Number(it.qty || 0);
+    const need = Math.max(0, ordered + num(v[1]) - num(v[0]));
+    sh.getRange(r, 11, 1, 2).setValues([[ordered, need]]);
+    out.push({ code: String(it.code), stock: num(v[0]), ordered: ordered, need: need, isNew: isNew });
+  });
+  return out;
 }
 
 function products() {
@@ -129,8 +163,10 @@ function saveOrder(o) {
   if (o.payNow) pay.appendRow([Utilities.formatDate(new Date(), 'Asia/Ho_Chi_Minh', 'dd/MM/yyyy'), code,
                                txt(o.customer), phone ? "'" + phone : '', o.payNow, 'Thanh toán', '', now]);
   const row = orders.getLastRow();
-  updateCustomerFromOrder(o, code, now);
-  return { ok: true, code: code, row: row };
+  const customer = updateCustomerFromOrder(o, code, now);
+  const stock = updateStock(o, code);
+  return { ok: true, code: code, row: row, items: items.length, customer: customer, stock: stock,
+           payments: (o.paidBefore ? 1 : 0) + (o.payNow ? 1 : 0) };
 }
 
 // Ô bắt đầu bằng = + - @ bị hiểu là công thức -> thêm dấu ' để giữ là chữ

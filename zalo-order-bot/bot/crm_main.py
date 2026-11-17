@@ -29,6 +29,7 @@ Biến môi trường:
   PAIR_CODE               mã ghép nối: gõ "/batdau <mã>" cho bot Telegram để nhận thông báo
   ORDER_SHEET_URL / ORDER_SHEET_TOKEN
                           URL Apps Script + mã bí mật của Google Sheet ĐƠN HÀNG (google-sheet/DonHang.gs)
+  CALL_TIME / CALL_DAYS   giờ nhắc gọi lại khách đang quan tâm (mặc định 09:00) và cách mấy ngày nhắc 1 lần (mặc định 3)
   ANTHROPIC_API_KEY       (tùy chọn) tự nhận đơn từ tin nhắn khách viết tự do; đọc ảnh phiếu đơn
 """
 import hashlib
@@ -56,7 +57,7 @@ from . import groups
 from .customer_info import (SheetWriter, candidate_urls, download, image_links, image_url, is_complete,
                             media_kind, parse_text, read_image)
 from .followup import dissatisfied, in_work_hours, needs_reply, parse_ts, short, utc_now, wait_text, waiting_lines
-from .orders import (Catalog, OrderSheet, ai_read_order, apply_edits, build_draft, pending_items, render,
+from .orders import (Catalog, OrderSheet, ai_read_order, apply_edits, build_draft, money, pending_items, render,
                      sheet_payload, totals, vnd)
 from .schedule import parse_add, parse_when, schedule_dept, when_text
 from .meeting import COMPANY, build_meeting, flatten, parse_meeting
@@ -98,6 +99,7 @@ class CRMBot:
         self.shop_names: set[str] = set()
         self.shop_uids: set[str] = set()
         self.sheet = None             # SheetWriter: ghi khách từ nhóm "THÔNG TIN KHÁCH HÀNG" vào Google Sheet
+        self.call_time, self.call_days = "09:00", 3  # nhắc gọi lại khách đang quan tâm
         self.order_sheet = None       # OrderSheet: Google Sheet đơn hàng (nhóm "CHỐT ĐƠN" -> nháp -> duyệt -> Sheet)
         self.staff_env: set[str] = set()  # tên nick Zalo nhân viên (khai trong .env); thêm/bớt bằng /nhanvien
         self.reply_minutes = 15       # khách chờ quá ngần này phút chưa được trả lời -> nhắc anh
@@ -431,7 +433,10 @@ class CRMBot:
                 self.send_report("⚠️ Nhóm THÔNG TIN KHÁCH HÀNG: có ảnh nhưng em không lấy được link ảnh.", "sale")
                 return
             try:
-                customers, source = read_image(*self.fetch_image(image_links(text)), caption)
+                picture, media = self.fetch_image(image_links(text))
+                if self.info_order(picture, media, caption, data, image):
+                    return  # ảnh có sản phẩm: đã thành đơn (đang quan tâm / nháp đơn đã cọc)
+                customers, source = read_image(picture, media, caption)
             except Exception as e:  # noqa: BLE001
                 log.exception("Không đọc được ảnh thông tin khách")
                 where = urllib.parse.urlparse(image)
@@ -606,6 +611,113 @@ class CRMBot:
             "", "Em tự ghi lịch khi nhân viên nhắn ngày/giờ trong nhóm Zalo loại công việc (/nhom congviec …).",
             "Thêm tay: /lich them kho mai 9h giao tủ chị Hiền · /lich xong L5 · /lich xoa L5 · /lich chuyen L5 kythuat"])
 
+    # ---------- Nhóm THÔNG TIN KHÁCH HÀNG: ảnh có sản phẩm -> đơn "đang quan tâm" hoặc nháp đơn đã cọc ----------
+    def info_order(self, picture: bytes, media: str, caption: str, data: dict, image: str) -> bool:
+        """True nếu ảnh có sản phẩm và đã xử lý thành đơn. Có cọc -> nháp đơn chờ anh "ok".
+        Chưa cọc -> ghi thẳng Sheet là "Khách chưa chốt – đang quan tâm" (không tiền, không giữ kho)."""
+        if not (self.order_sheet and ai_available()):
+            return False
+        catalog = self.catalog()
+        read = ai_read_order(picture, media, caption, [r["code"] for r in catalog.rows])
+        if not read or not read.get("is_order") or not read.get("items"):
+            return False
+        draft = build_draft(read, catalog)
+        sender, msg_id = data.get("senderName") or "", str(data.get("messageId") or "")
+        if totals(draft)[2]:  # đã cọc / đã trả tiền -> chốt đơn: anh xem nháp rồi "ok"
+            self.post_draft(self.store.add_draft(draft, sender, image, msg_id))
+            return True
+        try:
+            res = self.order_sheet.save_order(sheet_payload(draft, sender, image, msg_id, interest=True))
+        except Exception as e:  # noqa: BLE001
+            log.exception("Ghi đơn đang quan tâm thất bại")
+            res = {"ok": False, "error": str(e)}
+        if not res.get("ok"):  # không ghi được: giữ thành nháp để anh "ok" lại sau, không mất
+            draft["interest"] = True
+            self.post_draft(self.store.add_draft(draft, sender, image, msg_id),
+                            note=f"⚠️ Chưa ghi được Sheet ({res.get('error', '?')}). Trả lời \"ok\" để thử lại.")
+            return True
+        code = res.get("code") or "?"
+        sub, total, _, _ = totals(draft)
+        who = (draft.get("customer") or "(chưa có tên)") + (f" · {draft['phone']}" if draft.get("phone") else "")
+        lines = [f"🛒 SALE – KHÁCH ĐANG QUAN TÂM – {code}", f"👤 {who}"]
+        for it in draft["items"]:
+            price = (vnd(it["price"]) + (" (giá kho)" if it.get("price_from_stock") else "")) if it["price"] else "chưa có giá"
+            lines.append(f"• {it.get('code') or '?'} – {it.get('name') or ''} – {it['qty']:g} × {price}")
+        lines.append(f"💵 Tham khảo: {vnd(total)}")
+        lines.append(f"📋 Đã ghi Sheet: ĐƠN HÀNG {code} (chưa chốt) · CHI TIẾT ĐƠN {len(draft['items'])} dòng · "
+                     "KHÁCH HÀNG ghi chú \"Đang quan tâm\"" + (" – cập nhật đơn cũ, không tạo trùng" if res.get("updated") else ""))
+        if not draft.get("phone"):
+            lines.append("❓ Chưa có SĐT khách – anh bổ sung trong Sheet để em nhắc gọi được.")
+        lines.append(f"📞 Em nhắc anh gọi lại khách {self.call_days} ngày/lần.")
+        lines.append(f"→ Khách chốt: /chot {code} coc 5tr · Không mua: /khongmua {code}")
+        self.tell("sale", "\n".join(lines))
+        return True
+
+    def remind_interested(self, now: datetime | None = None) -> int:
+        """Mỗi sáng: khách đang quan tâm đủ 3, 6, 9… ngày -> Bot Sale nhắc anh gọi lại."""
+        if not self.order_sheet:
+            return 0
+        now = now or datetime.now()
+        due = []
+        for o in self.order_sheet.interested():
+            try:
+                since = datetime.strptime(str(o.get("since") or "")[:10], "%d/%m/%Y")
+            except ValueError:
+                continue
+            days = (now.date() - since.date()).days
+            if days >= self.call_days and days % self.call_days == 0:
+                due.append((days, o))
+        if not due:
+            return 0
+        lines = [f"📞 SALE – GỌI LẠI KHÁCH ĐANG QUAN TÂM ({len(due)} khách)"]
+        for days, o in sorted(due, key=lambda x: -x[0]):
+            lines.append(f"• {o['code']} {o.get('customer') or '?'}" + (f" · {o['phone']}" if o.get("phone") else "")
+                         + f" · quan tâm {days} ngày · {', '.join(o.get('codes') or [])}"
+                         + (f" · ~{vnd(o['total'])}" if o.get("total") else ""))
+        lines.append("→ Khách chốt: /chot D… coc 5tr · Không mua: /khongmua D… · Xem hết: /quantam")
+        self.tell("sale", "\n".join(lines))
+        return len(due)
+
+    def interest_command(self, name: str, args: str) -> str | None:
+        """/quantam · /chot D7 coc 5tr [06/10] · /khongmua D7."""
+        if not self.order_sheet:
+            return "⚠️ Chưa cài Google Sheet đơn hàng (chạy lại script cài đặt, dán link Apps Script DonHang.gs)."
+        if name == "quantam":
+            orders = self.order_sheet.interested()
+            if not orders:
+                return "✅ Không có khách nào đang quan tâm mà chưa chốt."
+            return "\n".join([f"📞 {len(orders)} KHÁCH ĐANG QUAN TÂM (chưa chốt):"] + [
+                f"• {o['code']} {o.get('customer') or '?'}" + (f" · {o['phone']}" if o.get("phone") else "")
+                + f" · từ {str(o.get('since') or '')[:10]} · {', '.join(o.get('codes') or [])}" for o in orders]
+                + ["→ /chot D… coc 5tr · /khongmua D…"])
+        m = re.match(r"^\s*([dD]\d+)\b(.*)$", args or "")
+        if not m:
+            return f"Cú pháp: /{name} D7" + (" coc 5tr" if name == "chot" else "")
+        code, rest = m.group(1).upper(), m.group(2).strip()
+        if name == "khongmua":
+            res = self.order_sheet.set_status(code, "Khách không mua")
+            return (f"🗑 {code} {res.get('customer') or ''}: ghi \"Khách không mua\", em thôi nhắc gọi."
+                    if res.get("ok") else f"⚠️ {res.get('error', '?')}")
+        words = rest.split()
+        if words and norm(words[0]) in ("coc", "tra", "thu"):
+            words = words[1:]
+        amount = money(words[0]) if words else 0
+        date = words[1] if len(words) > 1 else ""
+        res = self.order_sheet.close(code, amount or 0, date)
+        if not res.get("ok"):
+            return f"⚠️ {res.get('error', '?')}"
+        who = (res.get("customer") or "?") + (f" · {res['phone']}" if res.get("phone") else "")
+        self.tell("sale", f"🛒 SALE – ĐÃ LÊN ĐƠN {code} – khách đang quan tâm đã chốt\n👤 {who}\n💵 Tổng {vnd(res['total'])} · "
+                          f"cọc {vnd(res['paid'])} · còn phải thu {vnd(res['left'])}")
+        if res.get("paid"):
+            self.tell("ketoan", f"💰 KẾ TOÁN – ĐÃ THU – {code}\n👤 {who}\n💵 Tổng chốt {vnd(res['total'])}\n"
+                                f"💰 cọc {vnd(res['paid'])}\n📌 Còn phải thu: {vnd(res['left'])}")
+        short = [s for s in res.get("stock") or [] if s.get("need")]
+        if short:
+            self.tell("kho", f"📦 KHO – CẦN NHẬP HÀNG – đơn {code}\n" + "\n".join(
+                f"• {s['code']}: khách đặt {s['ordered']:g}, tồn {s['stock']:g} → cần nhập {s['need']:g}" for s in short))
+        return None
+
     # ---------- Nhóm "CHỐT ĐƠN": phiếu -> nháp đơn -> anh sửa, duyệt -> Google Sheet ----------
     def catalog(self) -> Catalog:
         """Danh mục kho (trang KHO của Sheet đơn hàng), lưu tạm 6 giờ."""
@@ -726,7 +838,8 @@ class CRMBot:
             return ("⚠️ Chưa cài Google Sheet đơn hàng nên em chưa lên đơn được. Chạy lại script cài đặt và dán link "
                     "Apps Script của Sheet đơn hàng (google-sheet/DonHang.gs).")
         try:
-            res = self.order_sheet.save_order(sheet_payload(draft, row["sender"], row["image"], row["msg_id"]))
+            res = self.order_sheet.save_order(sheet_payload(draft, row["sender"], row["image"], row["msg_id"],
+                                                            interest=bool(draft.get("interest"))))
         except Exception as e:  # noqa: BLE001
             log.exception("Ghi Sheet đơn hàng thất bại")
             res = {"ok": False, "error": str(e)}
@@ -748,6 +861,8 @@ class CRMBot:
             done.append("• KHO: " + "; ".join(
                 f"{s['code']}{' (mã mới – cần kiểm tra)' if s.get('isNew') else ''} khách đặt {s['ordered']:g}, "
                 f"tồn {s['stock']:g}" + (f" → cần nhập {s['need']:g}" if s.get("need") else "") for s in stock))
+        if res.get("converted"):
+            done.insert(1, f"• Khách đã có đơn đang quan tâm {code} → em chuyển thành ĐÃ CHỐT (không tạo đơn trùng)")
         self.tell("sale", f"🛒 SALE – ĐÃ LÊN ĐƠN {code} – N{draft_id}\n👤 {who}\n💵 Tổng chốt {vnd(total)} · "
                           f"{len(draft['items'])} món · Còn phải thu {vnd(left)}{approver}\n📋 Đã ghi Sheet:\n"
                           + "\n".join(done))
@@ -1284,6 +1399,8 @@ class CRMBot:
             return self.staff_command(cmd.args)
         if cmd and cmd.name == "nhom":
             return self.group_command(cmd.args)
+        if cmd and cmd.name in ("quantam", "chot", "khongmua"):
+            return self.interest_command(cmd.name, cmd.args)
         if cmd and cmd.name == "nhapdon":
             if not cmd.args.strip():
                 drafts = self.store.open_drafts()
@@ -1371,6 +1488,9 @@ class CRMBot:
                 if self.agenda_time and f"{now:%H:%M}" == self.agenda_time and f"lich {now.date()}" not in sent:
                     sent.add(f"lich {now.date()}")
                     self.send_agenda(now)
+                if self.call_time and f"{now:%H:%M}" == self.call_time and f"goi {now.date()}" not in sent:
+                    sent.add(f"goi {now.date()}")
+                    self.remind_interested(now)
             except Exception:  # noqa: BLE001
                 log.exception("Nhắc lịch hẹn thất bại")
             tag = f"{now.date()} {now:%H:%M}"
@@ -1523,7 +1643,9 @@ def main():
     bot.work_hours = os.environ.get("WORK_HOURS", "07:00-21:00").strip()
     bot.meeting_time = os.environ.get("MEETING_TIME", "18:00").strip()  # để trống = tắt họp tự động
     bot.schedule_minutes = int(os.environ.get("SCHEDULE_MINUTES", "60") or 60)
-    bot.agenda_time = os.environ.get("AGENDA_TIME", "07:30").strip()  # để trống = tắt lịch sáng
+    bot.agenda_time = os.environ.get("AGENDA_TIME", "07:30").strip()
+    bot.call_time = os.environ.get("CALL_TIME", "09:00").strip()  # để trống = tắt nhắc gọi lại khách
+    bot.call_days = max(1, int(os.environ.get("CALL_DAYS", "3") or 3))  # để trống = tắt lịch sáng
     # Mở cổng nhận webhook TRƯỚC: việc hỏi tên 5 bot Telegram có thể mất vài giây
     port, secret = int(os.environ.get("PORT", "8090")), os.environ.get("ZALOCRM_WEBHOOK_SECRET", "")
     threading.Thread(target=serve, args=(bot, port, secret), daemon=True).start()

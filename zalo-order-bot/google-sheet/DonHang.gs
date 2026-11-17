@@ -15,7 +15,7 @@ const HEADERS = {
                'Trạng thái', 'Hàng riêng chờ khảo sát/báo giá', 'Ghi chú', 'Người gửi', 'Link ảnh', 'Mã tin Zalo',
                'Lúc duyệt'],
   'CHI TIẾT ĐƠN': ['Mã đơn', 'STT', 'Mã SP', 'Tên sản phẩm', 'ĐVT', 'SL', 'Đơn giá', 'Thành tiền', 'Loại',
-                   'Ghi chú', 'Khớp kho', 'Khách hàng'],
+                   'Ghi chú', 'Khớp kho', 'Khách hàng', 'Đã giao', 'Ngày giao'],
   'THU TIỀN': ['Ngày', 'Mã đơn', 'Khách hàng', 'SĐT', 'Số tiền', 'Nội dung', 'Ghi chú', 'Lúc ghi'],
   'KHO': ['Mã SP', 'Tên sản phẩm', 'ĐVT', 'Giá bán', 'Bảo hành', 'Phân loại hàng', 'Hàng riêng của khách',
           'Tồn', 'Tồn tối thiểu', 'Ghi chú', 'Khách đặt chưa giao', 'Cần nhập thêm'],
@@ -29,6 +29,10 @@ function doPost(e) {
   lock.waitLock(20000);
   try {
     if (body.action === 'order') return json(saveOrder(body.order || {}));
+    if (body.action === 'deliver') return json(deliver(body));
+    if (body.action === 'pay') return json(pay(body));
+    if (body.action === 'restock') return json(restock(body));
+    if (body.action === 'order_info') return json(orderInfo(body.code));
     return json(saveCustomer(body));  // tin từ nhóm THÔNG TIN KHÁCH HÀNG
   } finally {
     lock.releaseLock();
@@ -169,8 +173,138 @@ function saveOrder(o) {
            payments: (o.paidBefore ? 1 : 0) + (o.payNow ? 1 : 0) };
 }
 
+// ---------- Sau khi chốt: giao hàng (trừ kho), thu tiền thêm, nhập kho, xem đơn ----------
+function findOrder(code) {
+  const sh = sheet('ĐƠN HÀNG');
+  const last = sh.getLastRow();
+  if (last < 2) return -1;
+  const codes = sh.getRange(2, 1, last - 1, 1).getValues().map(r => String(r[0]).trim().toUpperCase());
+  const i = codes.lastIndexOf(String(code || '').trim().toUpperCase());
+  return i < 0 ? -1 : i + 2;
+}
+
+function orderLines(code) {  // [{row, code, name, unit, qty, delivered}]
+  const sh = sheet('CHI TIẾT ĐƠN');
+  const last = sh.getLastRow();
+  if (last < 2) return [];
+  return sh.getRange(2, 1, last - 1, 14).getValues()
+    .map((r, i) => ({ row: i + 2, order: String(r[0]).toUpperCase(), code: String(r[2]), name: String(r[3]),
+                      unit: String(r[4]), qty: num(r[5]), kind: String(r[8]), delivered: num(r[12]) }))
+    .filter(l => l.order === String(code).toUpperCase());
+}
+
+function stockRow(code) {
+  const sh = sheet('KHO');
+  const last = sh.getLastRow();
+  if (last < 2) return -1;
+  const i = sh.getRange(2, 1, last - 1, 1).getValues().map(r => codeKey(r[0])).indexOf(codeKey(code));
+  return i < 0 ? -1 : i + 2;
+}
+
+function setStock(r, dStock, dOrdered) {  // đổi Tồn / Khách đặt chưa giao, tính lại Cần nhập thêm
+  const sh = sheet('KHO');
+  const v = sh.getRange(r, 8, 1, 5).getValues()[0];
+  const stock = num(v[0]) + dStock, ordered = Math.max(0, num(v[3]) + dOrdered);
+  const need = Math.max(0, ordered + num(v[1]) - stock);
+  sh.getRange(r, 8).setValue(stock);
+  sh.getRange(r, 11, 1, 2).setValues([[ordered, need]]);
+  return { code: String(sh.getRange(r, 1).getValue()), stock: stock, ordered: ordered, need: need };
+}
+
+// Giao hàng: items rỗng = giao hết phần còn lại; items = [{code, qty}] giao một phần
+function deliver(b) {
+  const row = findOrder(b.code);
+  if (row < 0) return { ok: false, error: 'Không có đơn ' + b.code };
+  const lines = orderLines(b.code);
+  const today = Utilities.formatDate(new Date(), 'Asia/Ho_Chi_Minh', 'dd/MM/yyyy');
+  const want = (b.items || []).map(it => ({ key: codeKey(it.code), qty: Number(it.qty) || 0 }));
+  const done = [], missing = [];
+  want.forEach(w => { if (!lines.some(l => codeKey(l.code) === w.key)) missing.push(w.key); });
+  lines.forEach(l => {
+    const left = l.qty - l.delivered;
+    if (left <= 0) return;
+    let q = left;
+    if (want.length) {
+      const w = want.find(x => x.key === codeKey(l.code));
+      if (!w) return;
+      q = Math.min(left, w.qty || left);
+    }
+    sheet('CHI TIẾT ĐƠN').getRange(l.row, 13, 1, 2).setValues([[l.delivered + q, today]]);
+    const r = l.kind === 'Hàng riêng' ? -1 : stockRow(l.code);
+    const st = r > 0 ? setStock(r, -q, -q) : null;
+    done.push({ code: l.code, name: l.name, qty: q, left: left - q, stock: st ? st.stock : null });
+  });
+  const all = orderLines(b.code);
+  const full = all.every(l => l.delivered >= l.qty);
+  const orders = sheet('ĐƠN HÀNG');
+  orders.getRange(row, 15).setValue(orderStatus(row));
+  return { ok: true, code: String(orders.getRange(row, 1).getValue()), delivered: done, missing: missing, full: full,
+           customer: String(orders.getRange(row, 3).getValue()),
+           remaining: all.filter(l => l.delivered < l.qty).map(l => ({ code: l.code, qty: l.qty - l.delivered })) };
+}
+
+// Khách trả thêm tiền cho đơn cũ: THU TIỀN + cập nhật Đã thu / Còn phải thu ở ĐƠN HÀNG và KHÁCH HÀNG
+function pay(b) {
+  const row = findOrder(b.code);
+  if (row < 0) return { ok: false, error: 'Không có đơn ' + b.code };
+  const amount = Number(b.amount) || 0;
+  if (!amount) return { ok: false, error: 'Thiếu số tiền' };
+  const orders = sheet('ĐƠN HÀNG');
+  const v = orders.getRange(row, 1, 1, 15).getValues()[0];
+  const paid = num(v[12]) + amount, left = num(v[8]) - paid;
+  orders.getRange(row, 13, 1, 2).setValues([[paid, left]]);
+  orders.getRange(row, 15).setValue(orderStatus(row));
+  const now = Utilities.formatDate(new Date(), 'Asia/Ho_Chi_Minh', 'dd/MM/yyyy HH:mm');
+  sheet('THU TIỀN').appendRow([b.date || now.slice(0, 10), b.code, txt(v[2]), v[3] ? "'" + cleanPhone(v[3]) : '', amount,
+                               'Thanh toán thêm', txt(b.note), now]);
+  const cs = sheet('KHÁCH HÀNG');
+  const crow = findCustomer(cs, cleanPhone(v[3]));
+  if (crow > 0) {
+    const c = cs.getRange(crow, 14, 1, 3).getValues()[0];
+    cs.getRange(crow, 14).setValue(num(c[0]) + amount);
+    cs.getRange(crow, 16, 1, 2).setValues([[num(c[2]) - amount, num(c[2]) - amount <= 0 ? 'Đã thanh toán đủ' : 'Đã chốt']]);
+  }
+  return { ok: true, code: String(v[0]), customer: String(v[2]), total: num(v[8]), paid: paid, left: left };
+}
+
+// Trạng thái đơn = giao hàng · tiền, vd "Giao một phần · Đã cọc, còn nợ 9.000.000"
+function orderStatus(row) {
+  const v = sheet('ĐƠN HÀNG').getRange(row, 1, 1, 14).getValues()[0];
+  const lines = orderLines(v[0]);
+  const got = lines.reduce((a, l) => a + l.delivered, 0);
+  const ship = !got ? 'Chưa giao' : lines.every(l => l.delivered >= l.qty) ? 'Đã giao đủ' : 'Giao một phần';
+  const paid = num(v[12]), left = num(v[13]);
+  const money = left <= 0 && paid > 0 ? 'Đã thanh toán đủ'
+    : paid > 0 ? 'Đã cọc, còn nợ ' + left.toLocaleString('vi-VN') : 'Chưa cọc';
+  return ship + ' · ' + money;
+}
+
+function restock(b) {
+  let r = stockRow(b.code);
+  if (r < 0) {
+    sheet('KHO').appendRow([txt(b.code), txt(b.name || ''), '', 0, '', 'Hàng thông thường', '', 0, 0,
+                            'Mã mới khi nhập kho – cần kiểm tra', 0, 0]);
+    r = sheet('KHO').getLastRow();
+  }
+  const st = setStock(r, Number(b.qty) || 0, 0);
+  return { ok: true, code: st.code, stock: st.stock, ordered: st.ordered, need: st.need };
+}
+
+function orderInfo(code) {
+  const row = findOrder(code);
+  if (row < 0) return { ok: false, error: 'Không có đơn ' + code };
+  const v = sheet('ĐƠN HÀNG').getRange(row, 1, 1, 16).getValues()[0];
+  return { ok: true, code: String(v[0]), customer: String(v[2]), phone: cleanPhone(v[3]), total: num(v[8]),
+           paid: num(v[12]), left: num(v[13]), status: String(v[14]), pending: String(v[15]),
+           lines: orderLines(code).map(l => ({ code: l.code, name: l.name, qty: l.qty, delivered: l.delivered })) };
+}
+
 // Ô bắt đầu bằng = + - @ bị hiểu là công thức -> thêm dấu ' để giữ là chữ
 function txt(v) { v = v == null ? '' : String(v); return /^[=+\-@]/.test(v) ? "'" + v : v; }
-function num(v) { return typeof v === 'number' ? v : Number(String(v).replace(/[^\d]/g, '')) || 0; }
+function num(v) {
+  if (typeof v === 'number') return v;
+  const n = Number(String(v).replace(/[^\d]/g, '')) || 0;
+  return /^\s*-/.test(String(v)) ? -n : n;
+}
 function doGet() { return json({ ok: true, message: 'Sheet đơn hàng + khách hàng sẵn sàng' }); }
 function json(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }

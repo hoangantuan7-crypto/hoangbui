@@ -141,6 +141,59 @@ def image_url(content: str) -> tuple[str, str]:
     return (links[0] if links else ""), str(caption or "")
 
 
+IMAGE_EXTS = {"jpg", "jpeg", "png", "webp", "gif", "heic", "heif", "bmp"}
+SKIP_TYPES = {"sticker", "voice", "video", "location", "contact_card"}
+
+
+def media_kind(ctype: str, content: str) -> tuple[str, str]:
+    """Loại tin trong nhóm đọc ảnh: ("text"|"image"|"file"|"skip", tên tệp).
+    Ảnh HD (chất lượng gốc) Zalo gửi dạng TỆP (.jpg) -> vẫn coi là ảnh."""
+    ctype = ctype or "text"
+    if ctype == "text":
+        return "text", ""
+    if ctype in ("image", "photo", "gif"):
+        return "image", ""
+    if ctype in SKIP_TYPES:
+        return "skip", ""
+    try:
+        data = json.loads(content or "")
+    except (ValueError, TypeError):
+        data = None
+    if not isinstance(data, dict) or not image_links(content):
+        return "skip", ""
+    params = data.get("params")
+    if isinstance(params, str):
+        try:
+            params = json.loads(params)
+        except ValueError:
+            params = {}
+    title = str(data.get("title") or "")
+    ext = str((params or {}).get("fileExt") or "").lower().lstrip(".") if isinstance(params, dict) else ""
+    for cand in (ext, title.rsplit(".", 1)[-1] if "." in title else "",
+                 urllib.parse.urlparse(image_links(content)[0]).path.rsplit(".", 1)[-1]):
+        if cand.lower() in IMAGE_EXTS:
+            return "image", title
+    if ctype == "file" or ext:
+        return "file", title or ext
+    return "image", title  # link/rich có link: thử đọc như ảnh
+
+
+def to_supported_image(data: bytes, media_type: str) -> tuple[bytes, str]:
+    """Claude chỉ đọc jpeg/png/gif/webp: ảnh khác (bmp, heic…) -> đổi sang JPEG bằng Pillow nếu được."""
+    if media_type in ("image/jpeg", "image/png", "image/gif", "image/webp"):
+        return data, media_type
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+
+        out = BytesIO()
+        Image.open(BytesIO(data)).convert("RGB").save(out, "JPEG", quality=90)
+        return out.getvalue(), "image/jpeg"
+    except Exception:  # noqa: BLE001
+        raise ValueError(f"định dạng ảnh {media_type} em chưa đọc được – anh gửi lại ảnh thường (không HD)") from None
+
+
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "app", "zalo-crm-app"}
 
 
@@ -161,9 +214,10 @@ def download(url: str, headers: dict | None = None) -> tuple[bytes, str]:
         ctype = (resp.headers.get("Content-Type") or "image/jpeg").split(";")[0].strip()
     if len(data) > MAX_IMAGE_BYTES:
         raise ValueError("Ảnh quá lớn (trên 10MB)")
-    if not ctype.startswith("image/"):
-        ctype = "image/png" if data[:4] == b"\x89PNG" else "image/jpeg"
-    return data, ctype
+    if not ctype.startswith("image/"):  # tệp ảnh HD tải về thường là application/octet-stream
+        ctype = ("image/png" if data[:4] == b"\x89PNG" else "image/webp" if data[8:12] == b"WEBP"
+                 else "image/heic" if data[4:12] in (b"ftypheic", b"ftypheix", b"ftypmif1") else "image/jpeg")
+    return to_supported_image(data, ctype)
 
 
 def ocr_available() -> bool:

@@ -54,7 +54,7 @@ from .departments import DEPTS, ROOM, TONG, dept_icon, dept_list, dept_name, par
 from .ai_assistant import ask_bot, parse_address
 from . import groups
 from .customer_info import (SheetWriter, candidate_urls, download, image_links, image_url, is_complete,
-                            parse_text, read_image)
+                            media_kind, parse_text, read_image)
 from .followup import dissatisfied, in_work_hours, needs_reply, parse_ts, short, utc_now, wait_text, waiting_lines
 from .orders import (Catalog, OrderSheet, ai_read_order, apply_edits, build_draft, pending_items, render,
                      sheet_payload, totals, vnd)
@@ -88,6 +88,7 @@ class CRMBot:
         self.pair_code = pair_code
         self.usernames: dict[str, str] = {}  # tên @ của từng bot (để gọi tên nhau trong phòng điều phối)
         self.poll_failures = 0
+        self.failures: dict[str, int] = {}  # mã tin -> số lần xử lý lỗi (lỗi mạng: thử lại, tối đa 5 lần)
         self.ask = ask_bot            # hỏi đáp bằng AI (thay được trong test)
         self.remind_minutes = 30
         self.meeting_time = "18:00"   # họp công ty tự động mỗi ngày
@@ -146,13 +147,25 @@ class CRMBot:
 
     # ---------- xử lý sự kiện webhook ----------
     def handle_event(self, payload: dict):
+        """Xử lý 1 tin. Lỗi giữa chừng (vd mất mạng) -> bỏ dấu "đã xử lý" để lần hỏi sau xử lý lại, không mất tin."""
+        marked: list[str] = []
+        try:
+            self._handle_event(payload, marked)
+        except Exception:
+            for key in marked:
+                self.store.unmark_seen(key)
+            raise
+
+    def _handle_event(self, payload: dict, marked: list[str]):
         event = payload.get("event", "")
         data = payload.get("data") or {}
         source = payload.get("source", "webhook")
         if source == "webhook":
             self.store.set_setting("last_event", f"{datetime.now():%d/%m %H:%M:%S} {event}")
-        if data.get("messageId") and not self.store.mark_seen(str(data["messageId"])):
-            return  # đã xử lý (qua webhook hoặc qua hỏi định kỳ)
+        if data.get("messageId"):
+            if not self.store.mark_seen(str(data["messageId"])):
+                return  # đã xử lý (qua webhook hoặc qua hỏi định kỳ)
+            marked.append(str(data["messageId"]))
         log.info("Nhận %s qua %s (loại tin: %s)", event, source, data.get("contentType", "-"))
         if event == "zalo.connected" and data.get("accountId"):
             if not self.store.get_setting("account_id"):
@@ -176,13 +189,16 @@ class CRMBot:
             dup = f"grpmsg:{conv['externalThreadId']}:{norm(data.get('senderName') or '')}:{data['sentAt']}:{digest}"
             if not self.store.mark_seen(dup):
                 return
+            marked.append(dup)
         if conv.get("threadType") == "group" and self.group_class(
                 (conv.get("contact") or {}).get("fullName") or "") == "thongtin":
             self.handle_customer_info(data, text)  # nhóm thông tin khách: ghi Google Sheet, không xử lý như chat khách
+            self.store.mark_seen(f"doc:{data.get('messageId')}")  # đã đọc xong (để /quetlai nhom không đọc lại)
             return
         if conv.get("threadType") == "group" and self.group_class(
                 (conv.get("contact") or {}).get("fullName") or "") == "chotdon":
             self.handle_order_doc(data, text)  # nhóm chốt đơn: đọc phiếu -> nháp đơn cho anh sửa và duyệt
+            self.store.mark_seen(f"doc:{data.get('messageId')}")
             return
         if conv.get("threadType") == "group" and self.group_class(
                 (conv.get("contact") or {}).get("fullName") or "") == "congviec":
@@ -403,8 +419,13 @@ class CRMBot:
         """Ảnh hoặc tin gõ tay thông tin khách -> đọc -> ghi Google Sheet -> báo anh qua Telegram."""
         sender = data.get("senderName") or ""
         ctype = data.get("contentType") or "text"
+        kind, fname = media_kind(ctype, text)
         image = ""
-        if ctype in ("image", "photo", "gif") or (ctype != "text" and '"href"' in text):
+        if kind == "file":
+            self.send_report(f"📇 THÔNG TIN KHÁCH HÀNG – CẦN KIỂM TRA: {sender or '?'} gửi tệp “{fname}”, em chỉ đọc được "
+                             "ảnh hoặc tin gõ tay. Anh gửi ảnh chụp hoặc gõ: KH: Tên | SĐT | Địa chỉ | ghi chú", "sale")
+            return
+        if kind == "image":
             image, caption = image_url(text)
             if not image:
                 self.send_report("⚠️ Nhóm THÔNG TIN KHÁCH HÀNG: có ảnh nhưng em không lấy được link ảnh.", "sale")
@@ -424,7 +445,7 @@ class CRMBot:
                                  f"nên chưa ghi vào Sheet. {hint}\nAnh có thể gõ tay vào nhóm: "
                                  f"KH: Tên | SĐT | Địa chỉ | ghi chú\nẢnh: {image}", "sale")
                 return
-        elif ctype in (None, "", "text") and text:
+        elif kind == "text" and text:
             customers, source = parse_text(text), "Gõ tay"
             if not customers:
                 return  # trò chuyện bình thường trong nhóm, không phải thông tin khách
@@ -606,12 +627,17 @@ class CRMBot:
         """Ảnh phiếu đơn / phiếu giao hàng / giấy ghi tay (hoặc tin gõ đơn) -> nháp đơn gửi Bot Sale."""
         sender = data.get("senderName") or ""
         ctype = data.get("contentType") or "text"
+        kind, fname = media_kind(ctype, text)
         image, caption, picture, media = "", "", None, "image/jpeg"
-        if ctype in ("image", "photo") or (ctype != "text" and '"href"' in text):
+        if kind == "file":
+            self.send_report(f"🛒 SALE – CẦN KIỂM TRA – {sender or '?'} gửi tệp “{fname}” vào nhóm CHỐT ĐƠN, em chỉ đọc "
+                             "được ảnh phiếu hoặc tin gõ. Anh gửi ảnh chụp phiếu giúp em.", "sale")
+            return
+        if kind == "image":
             image, caption = image_url(text)
             if not image:
                 return
-        elif ctype != "text" or not text or parse_command(text) or len(text) < 15 or not re.search(r"\d", text):
+        elif kind != "text" or not text or parse_command(text) or len(text) < 15 or not re.search(r"\d", text):
             return  # trò chuyện thường trong nhóm chốt đơn
         if not ai_available():
             self.send_report("🛒 SALE – CẦN KIỂM TRA – phiếu chốt đơn\nEm cần bật AI (ANTHROPIC_API_KEY) mới đọc được "
@@ -985,6 +1011,45 @@ class CRMBot:
                 + waiting_lines(second, now)))
         return sent
 
+    def rescan_docs(self, days: int = 2) -> str:
+        """Đọc lại ảnh/tệp trong nhóm THÔNG TIN KHÁCH HÀNG và CHỐT ĐƠN mà bot chưa đọc xong (bị sót, lỗi mạng)."""
+        days = max(1, min(int(days), 3))
+        since = utc_now() - timedelta(days=days)
+        done, found, groups_seen = set(), 0, []
+        for conv in self.crm.refresh_conversations():
+            title = (conv.get("contact") or {}).get("fullName") or ""
+            cls = self.group_class(title) if conv.get("threadType") == "group" else None
+            if cls not in ("thongtin", "chotdon") or self.key(conv) in done:
+                continue
+            if not conv.get("lastMessageAt") or parse_ts(conv["lastMessageAt"]) < since:
+                continue
+            done.add(self.key(conv))
+            groups_seen.append(title)
+            for m in reversed(self.crm.messages(conv["id"], limit=100)):
+                mid = str(m.get("id") or "")
+                if not mid or parse_ts(m.get("sentAt")) < since or self.store.is_seen(f"doc:{mid}"):
+                    continue
+                if media_kind(m.get("contentType") or "text", m.get("content") or "")[0] not in ("image", "file"):
+                    continue
+                data = {"messageId": mid, "conversationId": conv["id"], "content": m.get("content"),
+                        "contentType": m.get("contentType"), "senderName": m.get("senderName"), "sentAt": m.get("sentAt")}
+                self.store.mark_seen(mid)
+                (self.handle_customer_info if cls == "thongtin" else self.handle_order_doc)(data, m.get("content") or "")
+                self.store.mark_seen(f"doc:{mid}")
+                found += 1
+        if not groups_seen:
+            return f"Không thấy nhóm THÔNG TIN KHÁCH HÀNG / CHỐT ĐƠN nào có tin trong {days} ngày qua."
+        return (f"🔎 Đã đọc lại {found} ảnh/tệp bị sót trong {days} ngày qua ({', '.join(groups_seen)})."
+                if found else f"✅ Không có ảnh nào bị sót trong {days} ngày qua ({', '.join(groups_seen)}).")
+
+    def _rescan_and_reply(self, botname: str, chat_id: str, days: int):
+        try:
+            text = self.rescan_docs(days)
+        except Exception as e:  # noqa: BLE001
+            log.exception("Đọc lại ảnh trong nhóm thất bại")
+            text = f"⚠️ Đọc lại ảnh bị lỗi: {e}"
+        self._tg_send(f"{botname}:{chat_id}", text)
+
     def _scan_and_reply(self, botname: str, chat_id: str, days: int):
         try:
             text = self.scan_history(days)
@@ -1085,7 +1150,7 @@ class CRMBot:
             self.store.set_setting("poll_cursor", max(stamps) if stamps else datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"))
             log.info("Bắt đầu theo dõi tin nhắn mới từ ZaloCRM")
             return 0
-        count = 0
+        count, held = 0, False
         for conv in convs:
             if not conv.get("lastMessageAt") or conv["lastMessageAt"] <= cursor:
                 continue
@@ -1093,11 +1158,26 @@ class CRMBot:
                 if (m.get("sentAt") or "") <= cursor:
                     continue
                 count += 1
-                self.handle_event({"source": "hỏi định kỳ",
-                                   "event": "message.sent" if m.get("senderType") == "self" else "message.received",
-                                   "data": {"messageId": m.get("id"), "conversationId": conv["id"],
-                                            "content": m.get("content"), "contentType": m.get("contentType"),
-                                            "senderName": m.get("senderName"), "sentAt": m.get("sentAt")}})
+                try:
+                    self.handle_event({"source": "hỏi định kỳ",
+                                       "event": "message.sent" if m.get("senderType") == "self" else "message.received",
+                                       "data": {"messageId": m.get("id"), "conversationId": conv["id"],
+                                                "content": m.get("content"), "contentType": m.get("contentType"),
+                                                "senderName": m.get("senderName"), "sentAt": m.get("sentAt")}})
+                except Exception as e:  # noqa: BLE001 - 1 tin lỗi không chặn tin khác; lần hỏi sau thử lại
+                    mid = str(m.get("id") or "")
+                    tries = self.failures.get(mid, 0) + 1
+                    self.failures[mid] = tries
+                    log.warning("Tin %s xử lý lỗi lần %s: %s", mid, tries, e)
+                    if tries < 5:
+                        held = True  # giữ mốc đọc để lần sau đọc lại tin này
+                    else:
+                        self.store.mark_seen(mid)
+                        title = (conv.get("contact") or {}).get("fullName") or "?"
+                        self.report_problem(f"⚠️ Em xử lý tin của {m.get('senderName') or '?'} trong “{title}” lỗi 5 lần "
+                                            f"({e}). Anh xem lại tin đó giúp em; ảnh thì gõ /quetlai nhom 2 để đọc lại.")
+        if held:
+            return count
         if stamps and max(stamps) > cursor:
             self.store.set_setting("poll_cursor", max(stamps))
         if count:
@@ -1222,6 +1302,10 @@ class CRMBot:
             return self.name_list_command(
                 "muted_names", cmd.args, "🔕 KHÔNG QUÉT các chat này (gia đình, bạn bè…):",
                 "Thêm: /boqua Cả nhà Yêu, Mẹ · Bỏ khỏi danh sách: /boqua xoa Mẹ")
+        if cmd and cmd.name == "quetlai" and norm(cmd.args).startswith("nhom"):
+            days = int(re.sub(r"\D", "", cmd.args) or 2)
+            threading.Thread(target=self._rescan_and_reply, args=(botname, raw_chat, days), daemon=True).start()
+            return f"🔎 Đang đọc lại ảnh trong nhóm THÔNG TIN KHÁCH HÀNG / CHỐT ĐƠN {max(1, min(days, 3))} ngày qua…"
         if cmd and cmd.name == "quetlai":
             days = int(re.sub(r"\D", "", cmd.args) or 7)
             threading.Thread(target=self._scan_and_reply, args=(botname, raw_chat, days), daemon=True).start()

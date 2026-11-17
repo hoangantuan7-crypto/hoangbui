@@ -379,6 +379,13 @@ class Store:
         self.conn.commit()
         return cur.rowcount == 1
 
+    def is_seen(self, message_id: str) -> bool:
+        return self.conn.execute("SELECT 1 FROM seen_messages WHERE id=?", (message_id,)).fetchone() is not None
+
+    def unmark_seen(self, message_id: str):
+        self.conn.execute("DELETE FROM seen_messages WHERE id=?", (message_id,))
+        self.conn.commit()
+
     def prune_seen(self, days: int = 3):
         cutoff = (datetime.now() - timedelta(days=days)).isoformat()
         self.conn.execute("DELETE FROM seen_messages WHERE seen_at < ?", (cutoff,))

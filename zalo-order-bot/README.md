@@ -149,6 +149,19 @@ Tin nào có hẹn ngày hoặc giờ thì Bot Điều phối ghi thành lịch 
   `/lich xoa L5` · `/lich chuyen L5 kythuat`.
 - Tin không có ngày/giờ (trò chuyện thường) thì bot bỏ qua. Bot đọc sai thì `/lich xoa L<mã>`.
 
+### Khách đang quan tâm → đơn "chưa chốt" + nhắc gọi lại
+
+Khi đã cài Sheet đơn hàng và bật AI, ảnh trong nhóm **THÔNG TIN KHÁCH HÀNG** có sản phẩm thì:
+- **Chưa cọc** → bot ghi thẳng Sheet: ĐƠN HÀNG `D<số>` trạng thái **"Khách chưa chốt – đang quan tâm"**, CHI TIẾT ĐƠN
+  (món thiếu giá lấy giá kho, ghi "giá tham khảo"), KHÁCH HÀNG ghi chú "Đang quan tâm: <mã>". Không ghi tiền, không giữ kho.
+  Bot Sale báo 🟡 KHÁCH ĐANG QUAN TÂM. Cùng khách gửi lại nhu cầu → cập nhật đơn cũ, không tạo trùng.
+- **Đã cọc** → Bot Sale gửi nháp đơn như nhóm CHỐT ĐƠN; anh "ok" → nếu khách đang có đơn quan tâm thì chuyển đơn đó
+  thành ĐÃ CHỐT.
+- Ảnh chỉ có tên/SĐT → chỉ ghi trang KHÁCH HÀNG như trước.
+- `/chot D7 coc 5tr [06/10]`: khách đang quan tâm chốt + cọc (ghi THU TIỀN, giữ hàng trong KHO, Kế toán báo đã thu).
+  `/khongmua D7`: thôi nhắc. `/quantam`: danh sách khách đang quan tâm.
+- Mỗi sáng `CALL_TIME` (09:00) Bot Sale nhắc gọi lại khách quan tâm đủ 3, 6, 9… ngày (`CALL_DAYS`).
+
 ### Nhóm "CHỐT ĐƠN" → nháp đơn trong Telegram → Google Sheet đơn hàng
 
 1. Tạo Google Sheet đơn hàng có các trang: KHÁCH HÀNG, ĐƠN HÀNG, CHI TIẾT ĐƠN, THU TIỀN, KHO (mã SP, tên, ĐVT,

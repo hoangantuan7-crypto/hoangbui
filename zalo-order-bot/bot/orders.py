@@ -391,9 +391,11 @@ def _apply_line(draft: dict, line: str, key: str, catalog: Catalog) -> bool:
     return False
 
 
-def sheet_payload(draft: dict, sender: str, image: str, msg_id: str) -> dict:
+def sheet_payload(draft: dict, sender: str, image: str, msg_id: str, interest: bool = False) -> dict:
+    """interest=True: khách chưa chốt, đang quan tâm -> Sheet ghi đơn "đang quan tâm", không ghi tiền, không giữ kho."""
     sub, total, paid, left = totals(draft)
     return {
+        "interest": interest,
         "customer": draft.get("customer", ""), "phone": draft.get("phone", ""), "address": draft.get("address", ""),
         "orderDate": draft.get("order_date") or datetime.now().strftime("%d/%m/%Y"),
         "deliveryDate": draft.get("delivery_date", ""), "subtotal": sub, "discount": int(draft.get("discount") or 0),
@@ -405,7 +407,8 @@ def sheet_payload(draft: dict, sender: str, image: str, msg_id: str) -> dict:
         "items": [{"code": it.get("code", ""), "name": it.get("name", ""), "unit": it.get("unit", ""),
                    "qty": it["qty"], "price": it["price"], "amount": round(it["qty"] * it["price"]),
                    "kind": {"thuong": "Hàng sẵn", "tang": "Tặng", "rieng": "Hàng riêng"}[it["kind"]],
-                   "note": it.get("note", ""),
+                   "note": "; ".join(p for p in (it.get("note", ""),
+                                                  "giá tham khảo" if it.get("price_from_stock") else "") if p),
                    "match": {"dung": "Đúng mã", "gan": "Mã gần đúng", "": "Không có trong kho"}[it.get("match") or ""]}
                   for it in draft["items"]],
     }
@@ -431,3 +434,15 @@ class OrderSheet:
 
     def save_order(self, order: dict) -> dict:
         return self._post({"action": "order", "order": order})
+
+    def interested(self) -> list[dict]:
+        res = self._post({"action": "interested"})
+        if not res.get("ok"):
+            raise RuntimeError(res.get("error") or "Sheet đơn hàng từ chối")
+        return res.get("orders", [])
+
+    def close(self, code: str, amount: int, date: str = "") -> dict:
+        return self._post({"action": "close", "code": code, "amount": amount, "date": date})
+
+    def set_status(self, code: str, status: str) -> dict:
+        return self._post({"action": "set_status", "code": code, "status": status})

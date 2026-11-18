@@ -9,7 +9,7 @@ DIEUPHOI = "dieuphoi"
 BOT_NAMES = {DIEUPHOI: ("🧭", "Bot Điều phối"), **{d: (icon, f"Bot {name}") for d, (icon, name, _) in DEPTS.items()}}
 
 # Lệnh có mặt ở mọi bot
-COMMON = {"help", "choxuly", "xong", "chuyen", "bophan", "dangky", "huydangky", "lich"}
+COMMON = {"help", "choxuly", "xong", "chuyen", "bophan", "dangky", "huydangky", "lich", "tonghop"}
 
 # Lệnh riêng của từng bot bộ phận (Bot Điều phối dùng được tất cả)
 ALLOWED = {
@@ -38,6 +38,7 @@ DESCRIPTIONS = {
     "lavabo": "/lavabo – tủ lavabo cần lên đơn xưởng / đang chờ xưởng",
     "datxuong": "/datxuong 12 – đã đặt xưởng tủ lavabo cho đơn #12",
     "bophan": "/bophan – bot này thuộc bộ phận nào",
+    "tonghop": "/tonghop 1 7 – tổng hợp tin nhóm Zalo số 1 (trong /nhom) 7 ngày qua: tiền, việc, việc còn dở",
     "quantam": "/quantam – khách đang quan tâm, chưa chốt (em nhắc gọi lại 3 ngày/lần)",
     "chot": "/chot D7 coc 5tr – khách đang quan tâm đã chốt và cọc",
     "khongmua": "/khongmua D7 – khách không mua nữa, thôi nhắc gọi",
@@ -47,7 +48,7 @@ DESCRIPTIONS = {
     "hop": "Gõ \"họp\" – bot báo cáo việc hôm nay của bộ phận",
     "hoi": "Hỏi tự do, ví dụ: \"tủ của anh Nam đến đâu rồi?\" – bot trả lời dựa trên dữ liệu thật",
 }
-HELP_ORDER = ["hoi", "hop", "quantam", "chot", "khongmua", "nhapdon", "lich", "chuatraloi", "choxuly", "xong", "chuyen", "don", "donmo", "xem", "huy", "giao", "nhac", "thieu", "ton", "nhap",
+HELP_ORDER = ["hoi", "hop", "tonghop", "quantam", "chot", "khongmua", "nhapdon", "lich", "chuatraloi", "choxuly", "xong", "chuyen", "don", "donmo", "xem", "huy", "giao", "nhac", "thieu", "ton", "nhap",
               "toithieu", "lavabo", "datxuong", "bophan"]
 
 

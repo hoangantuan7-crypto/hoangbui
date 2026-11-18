@@ -59,6 +59,7 @@ from .customer_info import (SheetWriter, candidate_urls, download, image_links, 
 from .followup import dissatisfied, in_work_hours, needs_reply, parse_ts, short, utc_now, wait_text, waiting_lines
 from .orders import (Catalog, OrderSheet, ai_read_order, apply_edits, build_draft, money, pending_items, render,
                      sheet_payload, totals, vnd)
+from .summary import message_lines, summarize
 from .schedule import parse_add, parse_when, schedule_dept, when_text
 from .meeting import COMPANY, build_meeting, flatten, parse_meeting
 from .reports import full_report, lead_line, report_leads
@@ -1168,6 +1169,54 @@ class CRMBot:
                 + waiting_lines(second, now)))
         return sent
 
+    def resolve_group(self, args: str) -> tuple[str, int] | str:
+        """"1 7" / "PHÍ GIAO NHẬN 3" / "PHÍ GIAO NHẬN" -> (tên nhóm, số ngày) hoặc câu báo lỗi."""
+        words = (args or "").split()
+        days = 7
+        if len(words) > 1 and words[-1].isdigit():
+            days = int(words.pop())
+        if not words:
+            return "Cú pháp: /tonghop <số nhóm trong /nhom> [số ngày] – vd /tonghop 1 7 · /tonghop PHÍ GIAO NHẬN 3"
+        convs = groups.unique_groups(self.crm.refresh_conversations())
+        names = [(c.get("contact") or {}).get("fullName") or "" for c in convs]
+        numbered = [n for n in self.store.get_setting("nhom_list").split("\n") if n]
+        found, _ = groups.resolve([" ".join(words)], numbered, names)
+        if not found:
+            return f"❓ Không tìm thấy nhóm “{' '.join(words)}”. Gõ /nhom để xem số thứ tự rồi /tonghop <số>."
+        return found[0], max(1, min(days, 30))
+
+    def group_summary(self, name: str, days: int = 7) -> str:
+        since = utc_now() - timedelta(days=days)
+        convs = [c for c in self.crm.refresh_conversations()
+                 if c.get("threadType") == "group" and ((c.get("contact") or {}).get("fullName") or "") == name]
+        msgs, seen = [], set()
+        for conv in convs:  # cùng 1 nhóm thấy qua 2 nick shop: gộp, bỏ tin trùng
+            for m in self.crm.messages(conv["id"], limit=200):
+                key = (m.get("sentAt"), m.get("senderName"), m.get("content"))
+                if key in seen or not m.get("sentAt") or parse_ts(m["sentAt"]) < since:
+                    continue
+                seen.add(key)
+                msgs.append(m)
+        msgs.sort(key=lambda m: m.get("sentAt") or "")
+        lines = message_lines(msgs)
+        head = f"📝 TỔNG HỢP NHÓM “{name}” – {days} ngày qua ({len(lines)} tin)"
+        if not lines:
+            return (head + "\nKhông có tin nào trong ZaloCRM. Nhớ: ZaloCRM chỉ có tin từ lúc nick Tấn Phát Cs ở trong "
+                    "nhóm và máy đang chạy.")
+        start, end = lines[0][:11], lines[-1][:11]
+        text = summarize(name, lines, start, end)
+        if text:
+            return f"{head}\n\n{text}"
+        return "\n".join([head, "(Chưa bật AI nên em liệt kê từng tin)", ""] + lines[-80:])
+
+    def _summary_and_reply(self, botname: str, chat_id: str, name: str, days: int):
+        try:
+            text = self.group_summary(name, days)
+        except Exception as e:  # noqa: BLE001
+            log.exception("Tổng hợp nhóm thất bại")
+            text = f"⚠️ Tổng hợp nhóm bị lỗi: {e}"
+        self._tg_send(f"{botname}:{chat_id}", text)
+
     def rescan_docs(self, days: int = 2) -> str:
         """Đọc lại ảnh/tệp trong nhóm THÔNG TIN KHÁCH HÀNG và CHỐT ĐƠN mà bot chưa đọc xong (bị sót, lỗi mạng)."""
         days = max(1, min(int(days), 3))
@@ -1441,6 +1490,12 @@ class CRMBot:
             return self.staff_command(cmd.args)
         if cmd and cmd.name == "nhom":
             return self.group_command(cmd.args)
+        if cmd and cmd.name == "tonghop":
+            target = self.resolve_group(cmd.args)
+            if isinstance(target, str):
+                return target
+            threading.Thread(target=self._summary_and_reply, args=(botname, raw_chat, *target), daemon=True).start()
+            return f"📝 Đang đọc lại tin nhóm “{target[0]}” {target[1]} ngày qua, xong em gửi tổng hợp ngay…"
         if cmd and cmd.name in ("quantam", "chot", "khongmua"):
             return self.interest_command(cmd.name, cmd.args)
         if cmd and cmd.name == "nhapdon":

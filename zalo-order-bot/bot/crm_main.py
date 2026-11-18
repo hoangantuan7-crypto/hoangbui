@@ -59,7 +59,7 @@ from .customer_info import (SheetWriter, candidate_urls, download, image_links, 
 from .followup import dissatisfied, in_work_hours, needs_reply, parse_ts, short, utc_now, wait_text, waiting_lines
 from .orders import (Catalog, OrderSheet, ai_read_order, apply_edits, build_draft, money, pending_items, render,
                      sheet_payload, totals, vnd)
-from .summary import message_lines, summarize
+from .summary import describe_image, message_entries, summarize
 from .schedule import parse_add, parse_when, schedule_dept, when_text
 from .meeting import COMPANY, build_meeting, flatten, parse_meeting
 from .reports import full_report, lead_line, report_leads
@@ -514,8 +514,16 @@ class CRMBot:
         if kind == "text":
             body = f"💬 “{short(text, 500)}”"
         else:
-            link = image_url(text)[0]
+            link, caption = image_url(text)
             body = ("📷 ảnh" if kind == "image" else f"📎 tệp {fname}") + (f": {link}" if link else "")
+            if kind == "image" and link and ai_available():  # AI đọc nội dung ảnh (phiếu, chuyển khoản…)
+                try:
+                    seen = describe_image(*self.fetch_image(image_links(text)), caption)
+                except Exception as e:  # noqa: BLE001
+                    log.info("Không đọc được ảnh nhóm bộ phận: %s", e)
+                    seen = None
+                if seen:
+                    body = f"📷 ảnh – em đọc được:\n{seen}\n🔗 {link}"
         msg = (" ".join(DEPTS[d][0] for d in depts) + " " + " + ".join(DEPTS[d][1].upper() for d in depts)
                + f" – TIN NHÓM {group}\n👤 {sender}: {body}")
         room = self.room_key()
@@ -1198,13 +1206,14 @@ class CRMBot:
                 seen.add(key)
                 msgs.append(m)
         msgs.sort(key=lambda m: m.get("sentAt") or "")
-        lines = message_lines(msgs)
+        entries = message_entries(msgs)
+        lines = [line for line, _ in entries]
         head = f"📝 TỔNG HỢP NHÓM “{name}” – {days} ngày qua ({len(lines)} tin)"
         if not lines:
             return (head + "\nKhông có tin nào trong ZaloCRM. Nhớ: ZaloCRM chỉ có tin từ lúc nick Tấn Phát Cs ở trong "
                     "nhóm và máy đang chạy.")
         start, end = lines[0][:11], lines[-1][:11]
-        text = summarize(name, lines, start, end)
+        text = summarize(name, entries, start, end, fetch=self.fetch_image)
         if text:
             return f"{head}\n\n{text}"
         return "\n".join([head, "(Chưa bật AI nên em liệt kê từng tin)", ""] + lines[-80:])

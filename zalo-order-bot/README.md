@@ -139,12 +139,13 @@ Câu trả lời khi anh gõ lệnh giữ nguyên chữ thường. Gõ liền m�
 Bot Telegram không vào được nhóm Zalo, nhưng Bot Điều phối đọc nhóm qua ZaloCRM và **chuyển mọi tin cho bot bộ phận**:
 - `/nhom kho+ketoan PHÍ GIAO NHẬN HÀNG SHOWROOM` – nhóm này của Kho + Kế toán. Một bộ phận: `/nhom kho Tên nhóm`.
 - Tên nhóm bắt đầu bằng **KHO / KẾ TOÁN / KỸ THUẬT / SALE** (vd "KHO TEST") thì tự nhận, "ĐIỀU PHỐI…" là nhóm công việc.
-- Tin chữ, ảnh, tệp trong nhóm → Bot Kho và Bot Kế toán nhận 🟢 "TIN NHÓM …" (im lặng). Có phòng điều phối thì chỉ
+- Tin chữ, ảnh, tệp trong nhóm → Bot Kho và Bot Kế toán nhận 🟢 "TIN NHÓM …" (im lặng). Ảnh thì AI đọc tóm tắt
+  nội dung (loại phiếu, khách, mã hàng, số tiền) kèm link ảnh. Có phòng điều phối thì chỉ
   1 tin trong phòng. Tin có hẹn ngày/giờ → ghi lịch và nhắc như nhóm công việc. Không coi là tin khách.
 
 - `/tonghop 1 7` (nhóm số 1 trong `/nhom`, 7 ngày qua) hoặc `/tonghop PHÍ GIAO NHẬN 3`: bot đọc lại tin của nhóm trong
   ZaloCRM và tóm tắt bằng AI (tiền, việc đã làm, việc còn dở, ai phụ trách). Không có AI thì liệt kê từng tin.
-  Ảnh/tệp chỉ ghi là [ảnh]/[tệp]. ZaloCRM chỉ có tin từ lúc nick Tấn Phát Cs ở trong nhóm và máy đang chạy.
+  Có AI thì đọc luôn nội dung 15 ảnh mới nhất (phiếu, chuyển khoản, hàng hóa). ZaloCRM chỉ có tin từ lúc nick Tấn Phát Cs ở trong nhóm và máy đang chạy.
 
 ### Nhóm nội bộ "công việc": lịch hẹn và nhắc việc
 

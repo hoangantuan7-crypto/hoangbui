@@ -66,3 +66,33 @@ class SummaryTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ImageReadingTest(unittest.TestCase):
+    def test_summary_sends_recent_images_to_ai(self):
+        from bot import summary
+        entries = [("18/11 09:00 Hoàng: [ảnh]", ["https://x/1.jpg"]), ("18/11 09:05 Linh: ship 350k", []),
+                   ("18/11 09:16 Hoàng: [ảnh]", ["https://x/2.jpg"])]
+        fetched = []
+        with mock.patch("bot.ai_parser.ai_available", return_value=True), \
+                mock.patch.object(summary, "_call", return_value="tóm tắt") as call:
+            out = summary.summarize("PHÍ GIAO NHẬN", entries, "18/11", "18/11",
+                                    fetch=lambda links: fetched.append(links[0]) or (b"img", "image/jpeg"))
+        self.assertEqual(out, "tóm tắt")
+        self.assertEqual(fetched, ["https://x/1.jpg", "https://x/2.jpg"])
+        content = call.call_args[0][0]
+        self.assertEqual([b["type"] for b in content], ["text", "image", "text", "image"])
+
+    def test_dept_group_image_is_described(self):
+        from test_dept_group import DeptGroupTest
+        t = DeptGroupTest("test_auto_names")
+        t.setUp()
+        e = __import__("test_groups").ev(5, "d", json.dumps({"href": "https://x/p.jpg"}), sender="Hoàng")
+        e["data"]["contentType"] = "image"
+        with mock.patch.object(crm_main, "ai_available", return_value=True), \
+                mock.patch.object(CRMBot, "fetch_image", return_value=(b"img", "image/jpeg")), \
+                mock.patch.object(crm_main, "describe_image", return_value="Phiếu giao hàng chị Hương, phí ship 350.000đ"):
+            t.bot.handle_event(e)
+        msg = t.d["kho"].to(BOSS)[0]
+        self.assertIn("em đọc được:\nPhiếu giao hàng chị Hương, phí ship 350.000đ", msg)
+        self.assertIn("🔗 https://x/p.jpg", msg)

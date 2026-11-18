@@ -142,6 +142,10 @@ Bot Telegram không vào được nhóm Zalo, nhưng Bot Điều phối đọc n
 - Tin chữ, ảnh, tệp trong nhóm → Bot Kho và Bot Kế toán nhận 🟢 "TIN NHÓM …" (im lặng). Có phòng điều phối thì chỉ
   1 tin trong phòng. Tin có hẹn ngày/giờ → ghi lịch và nhắc như nhóm công việc. Không coi là tin khách.
 
+- `/tonghop 1 7` (nhóm số 1 trong `/nhom`, 7 ngày qua) hoặc `/tonghop PHÍ GIAO NHẬN 3`: bot đọc lại tin của nhóm trong
+  ZaloCRM và tóm tắt bằng AI (tiền, việc đã làm, việc còn dở, ai phụ trách). Không có AI thì liệt kê từng tin.
+  Ảnh/tệp chỉ ghi là [ảnh]/[tệp]. ZaloCRM chỉ có tin từ lúc nick Tấn Phát Cs ở trong nhóm và máy đang chạy.
+
 ### Nhóm nội bộ "công việc": lịch hẹn và nhắc việc
 
 Xếp nhóm nội bộ vào loại này: `/nhom congviec 3, 6`. Tin nhân viên nhắn trong nhóm **không** bị coi là tin khách.

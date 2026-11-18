@@ -104,6 +104,7 @@ COMMAND_ALIASES = {
     "thieu": "thieu", "thiếu": "thieu", "lavabo": "lavabo", "nhac": "nhac", "nhắc": "nhac",
     "baocao": "baocao", "bc": "baocao", "donmo": "donmo",
     "xong": "xong", "choxuly": "choxuly", "cho": "choxuly",
+    "tonghop": "tonghop", "tổnghợp": "tonghop", "th": "tonghop",
     "chot": "chot", "chốt": "chot", "khongmua": "khongmua", "khôngmua": "khongmua",
     "quantam": "quantam", "quantâm": "quantam",
     "nhapdon": "nhapdon", "nhápđơn": "nhapdon", "nhapđon": "nhapdon",

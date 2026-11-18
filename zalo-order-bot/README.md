@@ -143,6 +143,7 @@ Bot Telegram không vào được nhóm Zalo, nhưng Bot Điều phối đọc n
   nội dung (loại phiếu, khách, mã hàng, số tiền) kèm link ảnh. Có phòng điều phối thì chỉ
   1 tin trong phòng. Tin có hẹn ngày/giờ → ghi lịch và nhắc như nhóm công việc. Không coi là tin khách.
 
+- `/quetlai nhom 1`: chuyển bù ảnh gửi trước khi nhóm được xếp loại (hoặc bị sót) cho bot bộ phận, có AI đọc.
 - `/tonghop 1 7` (nhóm số 1 trong `/nhom`, 7 ngày qua) hoặc `/tonghop PHÍ GIAO NHẬN 3`: bot đọc lại tin của nhóm trong
   ZaloCRM và tóm tắt bằng AI (tiền, việc đã làm, việc còn dở, ai phụ trách). Không có AI thì liệt kê từng tin.
   Có AI thì đọc luôn nội dung 15 ảnh mới nhất (phiếu, chuyển khoản, hàng hóa). ZaloCRM chỉ có tin từ lúc nick Tấn Phát Cs ở trong nhóm và máy đang chạy.

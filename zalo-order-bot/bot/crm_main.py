@@ -207,6 +207,7 @@ class CRMBot:
                                   if conv.get("threadType") == "group" else None)
         if depts:
             self.handle_dept_group(conv, data, text, depts)  # nhóm bộ phận: chuyển tin cho bot bộ phận
+            self.store.mark_seen(f"doc:{data.get('messageId')}")
             return
         if conv.get("threadType") == "group" and self.group_class(
                 (conv.get("contact") or {}).get("fullName") or "") == "congviec":
@@ -1227,14 +1228,16 @@ class CRMBot:
         self._tg_send(f"{botname}:{chat_id}", text)
 
     def rescan_docs(self, days: int = 2) -> str:
-        """Đọc lại ảnh/tệp trong nhóm THÔNG TIN KHÁCH HÀNG và CHỐT ĐƠN mà bot chưa đọc xong (bị sót, lỗi mạng)."""
+        """Đọc lại ảnh/tệp trong nhóm THÔNG TIN KHÁCH HÀNG, CHỐT ĐƠN và nhóm bộ phận (Kho, Kế toán…) mà bot chưa
+        đọc xong: bị sót, lỗi mạng, hoặc gửi trước khi nhóm được xếp loại."""
         days = max(1, min(int(days), 3))
         since = utc_now() - timedelta(days=days)
         done, found, groups_seen = set(), 0, []
         for conv in self.crm.refresh_conversations():
             title = (conv.get("contact") or {}).get("fullName") or ""
             cls = self.group_class(title) if conv.get("threadType") == "group" else None
-            if cls not in ("thongtin", "chotdon") or self.key(conv) in done:
+            depts = groups.dept_codes(cls)
+            if (cls not in ("thongtin", "chotdon") and not depts) or self.key(conv) in done:
                 continue
             if not conv.get("lastMessageAt") or parse_ts(conv["lastMessageAt"]) < since:
                 continue
@@ -1249,11 +1252,14 @@ class CRMBot:
                 data = {"messageId": mid, "conversationId": conv["id"], "content": m.get("content"),
                         "contentType": m.get("contentType"), "senderName": m.get("senderName"), "sentAt": m.get("sentAt")}
                 self.store.mark_seen(mid)
-                (self.handle_customer_info if cls == "thongtin" else self.handle_order_doc)(data, m.get("content") or "")
+                if depts:
+                    self.handle_dept_group(conv, data, m.get("content") or "", depts)
+                else:
+                    (self.handle_customer_info if cls == "thongtin" else self.handle_order_doc)(data, m.get("content") or "")
                 self.store.mark_seen(f"doc:{mid}")
                 found += 1
         if not groups_seen:
-            return f"Không thấy nhóm THÔNG TIN KHÁCH HÀNG / CHỐT ĐƠN nào có tin trong {days} ngày qua."
+            return f"Không thấy nhóm THÔNG TIN KHÁCH HÀNG / CHỐT ĐƠN / bộ phận nào có tin trong {days} ngày qua."
         return (f"🔎 Đã đọc lại {found} ảnh/tệp bị sót trong {days} ngày qua ({', '.join(groups_seen)})."
                 if found else f"✅ Không có ảnh nào bị sót trong {days} ngày qua ({', '.join(groups_seen)}).")
 
@@ -1528,7 +1534,8 @@ class CRMBot:
         if cmd and cmd.name == "quetlai" and norm(cmd.args).startswith("nhom"):
             days = int(re.sub(r"\D", "", cmd.args) or 2)
             threading.Thread(target=self._rescan_and_reply, args=(botname, raw_chat, days), daemon=True).start()
-            return f"🔎 Đang đọc lại ảnh trong nhóm THÔNG TIN KHÁCH HÀNG / CHỐT ĐƠN {max(1, min(days, 3))} ngày qua…"
+            return (f"🔎 Đang đọc lại ảnh trong nhóm THÔNG TIN KHÁCH HÀNG / CHỐT ĐƠN / bộ phận {max(1, min(days, 3))} "
+                    "ngày qua…")
         if cmd and cmd.name == "quetlai":
             days = int(re.sub(r"\D", "", cmd.args) or 7)
             threading.Thread(target=self._scan_and_reply, args=(botname, raw_chat, days), daemon=True).start()

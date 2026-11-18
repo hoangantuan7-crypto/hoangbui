@@ -50,6 +50,24 @@ class DeptGroupTest(unittest.TestCase):
         self.assertTrue(any("GHI LỊCH L1 – 📦 Kho" in t for t in room))
         self.assertEqual(self.d["ketoan"].to(ROOM), [])
 
+    def test_photos_sent_before_classifying_are_forwarded_by_rescan(self):
+        import json
+        from unittest import mock
+        from bot import crm_main
+        from test_groups import iso
+        photo = json.dumps({"href": "https://x/p.jpg"})
+        self.crm.messages = lambda cid, limit=30: [
+            {"id": "p1", "sentAt": iso(minutes=40), "senderName": "Tấn Phát Tbd", "contentType": "image",
+             "content": photo}] if cid == "d" else []
+        self.bot.store.mark_seen("p1")  # bản cũ đã thấy ảnh nhưng nhóm còn là "nội bộ – không đọc"
+        with mock.patch.object(crm_main, "ai_available", return_value=True), \
+                mock.patch.object(CRMBot, "fetch_image", return_value=(b"img", "image/jpeg")), \
+                mock.patch.object(crm_main, "describe_image", return_value="Phiếu xuất kho 14 dòng"):
+            self.assertIn("Đã đọc lại 1", self.bot.rescan_docs(1))
+            self.assertIn("Không có ảnh nào bị sót", self.bot.rescan_docs(1))
+        self.assertIn("Phiếu xuất kho 14 dòng", self.d["kho"].to(BOSS)[0])
+        self.assertIn("Phiếu xuất kho 14 dòng", self.d["ketoan"].to(BOSS)[0])
+
     def test_auto_names(self):
         self.assertEqual(groups.auto_class("kho test"), "bp:kho")
         self.assertEqual(groups.auto_class("ke toan test"), "bp:ketoan")

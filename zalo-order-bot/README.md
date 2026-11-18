@@ -134,6 +134,14 @@ Câu trả lời khi anh gõ lệnh giữ nguyên chữ thường. Gõ liền m�
   đang có mà không báo gì.
 - Một nhóm có 2 nick shop ở trong thì ZaloCRM ghi mỗi tin 2 lần; bot gộp lại nên chỉ báo một lần.
 
+### Nhóm làm việc của bộ phận (Kho, Kế toán, Kỹ thuật, Sale)
+
+Bot Telegram không vào được nhóm Zalo, nhưng Bot Điều phối đọc nhóm qua ZaloCRM và **chuyển mọi tin cho bot bộ phận**:
+- `/nhom kho+ketoan PHÍ GIAO NHẬN HÀNG SHOWROOM` – nhóm này của Kho + Kế toán. Một bộ phận: `/nhom kho Tên nhóm`.
+- Tên nhóm bắt đầu bằng **KHO / KẾ TOÁN / KỸ THUẬT / SALE** (vd "KHO TEST") thì tự nhận, "ĐIỀU PHỐI…" là nhóm công việc.
+- Tin chữ, ảnh, tệp trong nhóm → Bot Kho và Bot Kế toán nhận 🟢 "TIN NHÓM …" (im lặng). Có phòng điều phối thì chỉ
+  1 tin trong phòng. Tin có hẹn ngày/giờ → ghi lịch và nhắc như nhóm công việc. Không coi là tin khách.
+
 ### Nhóm nội bộ "công việc": lịch hẹn và nhắc việc
 
 Xếp nhóm nội bộ vào loại này: `/nhom congviec 3, 6`. Tin nhân viên nhắn trong nhóm **không** bị coi là tin khách.

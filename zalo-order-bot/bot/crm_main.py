@@ -202,6 +202,11 @@ class CRMBot:
             self.handle_order_doc(data, text)  # nhóm chốt đơn: đọc phiếu -> nháp đơn cho anh sửa và duyệt
             self.store.mark_seen(f"doc:{data.get('messageId')}")
             return
+        depts = groups.dept_codes(self.group_class((conv.get("contact") or {}).get("fullName") or "")
+                                  if conv.get("threadType") == "group" else None)
+        if depts:
+            self.handle_dept_group(conv, data, text, depts)  # nhóm bộ phận: chuyển tin cho bot bộ phận
+            return
         if conv.get("threadType") == "group" and self.group_class(
                 (conv.get("contact") or {}).get("fullName") or "") == "congviec":
             self.handle_internal(conv, data, text)  # nhóm nội bộ làm việc: ghi lịch hẹn, không coi là tin khách
@@ -496,6 +501,41 @@ class CRMBot:
         at, all_day = when
         group = (conv.get("contact") or {}).get("fullName") or "?"
         self.add_schedule(at, all_day, schedule_dept(text), text, data.get("senderName") or "", f"nhóm {group}")
+
+    def handle_dept_group(self, conv: dict, data: dict, text: str, depts: list[str]):
+        """Nhóm Zalo làm việc của bộ phận (vd PHÍ GIAO NHẬN… = Kho + Kế toán): mọi tin chuyển cho bot bộ phận
+        trên Telegram (im lặng, không rung); tin có hẹn ngày/giờ thì ghi lịch và nhắc như nhóm công việc."""
+        kind, fname = media_kind(data.get("contentType") or "text", text)
+        if kind == "skip" or (kind == "text" and (not text or parse_command(text))):
+            return
+        group = (conv.get("contact") or {}).get("fullName") or "?"
+        sender = data.get("senderName") or "?"
+        if kind == "text":
+            body = f"💬 “{short(text, 500)}”"
+        else:
+            link = image_url(text)[0]
+            body = ("📷 ảnh" if kind == "image" else f"📎 tệp {fname}") + (f": {link}" if link else "")
+        msg = (" ".join(DEPTS[d][0] for d in depts) + " " + " + ".join(DEPTS[d][1].upper() for d in depts)
+               + f" – TIN NHÓM {group}\n👤 {sender}: {body}")
+        room = self.room_key()
+        if room:
+            self._speak(depts[0], room.partition(":")[2], msg)
+            sent = {k for d in depts for k in self.dept_only_chats(d)}
+            for key in sent:
+                self._tg_send(key, msg)
+        elif self.tg:
+            sent = []
+            for d in depts:
+                sent += [k for k in self.targets(d) if k not in sent]
+            for key in sent:
+                self._tg_send(key, msg)
+        else:
+            self.send_report(msg, depts[0])
+        if kind == "text":
+            when = parse_when(text, parse_ts(data.get("sentAt")).astimezone().replace(tzinfo=None))
+            if when:
+                dept = schedule_dept(text)
+                self.add_schedule(*when, dept if dept in depts else depts[0], text, sender, f"nhóm {group}")
 
     def add_schedule(self, at: datetime, all_day: bool, dept: str | None, text: str, sender: str,
                      source: str) -> str | None:
@@ -926,7 +966,7 @@ class CRMBot:
             else:
                 mapping[norm(name)] = cls
         groups.save(self.store, mapping)
-        label = "Bỏ xếp loại" if cls == "xoa" else f"{groups.CLASSES[cls][0]} {groups.CLASSES[cls][1]}"
+        label = "Bỏ xếp loại" if cls == "xoa" else " ".join(groups.info(cls))
         out = [f"✅ {label}: " + (", ".join(found) if found else "(không có nhóm nào)")]
         if ahead:
             out.append("ℹ️ Chưa thấy trong ZaloCRM (em vẫn ghi nhớ, nhóm xuất hiện sẽ áp dụng): " + ", ".join(ahead))
@@ -948,7 +988,8 @@ class CRMBot:
             return
         contact = conv.get("contact") or {}
         title = contact.get("fullName") or "?"
-        if self.is_muted_name(title) or self.group_class(title) in ("noibo", "boqua", "congviec", "chotdon", "thongtin"):
+        if self.is_muted_name(title) or self.group_class(title) in ("noibo", "boqua", "congviec", "chotdon", "thongtin") \
+                or groups.dept_codes(self.group_class(title)):
             return
         detail = self.crm.contact(contact["id"]) if contact.get("id") else None
         created = (detail or {}).get("createdAt")
@@ -999,8 +1040,9 @@ class CRMBot:
             if k in done:
                 continue  # cùng 1 nhóm thấy từ 2 nick shop: chỉ quét 1 lần
             done.add(k)
-            if conv.get("threadType") == "group" and self.group_class(
-                    (conv.get("contact") or {}).get("fullName") or "") in ("thongtin", "noibo", "boqua", "congviec", "chotdon"):
+            cls = self.group_class((conv.get("contact") or {}).get("fullName") or "")
+            if conv.get("threadType") == "group" and (cls in ("thongtin", "noibo", "boqua", "congviec", "chotdon")
+                                                      or groups.dept_codes(cls)):
                 continue
             contact = conv.get("contact") or {}
             title, phone = contact.get("fullName") or "", contact.get("phone") or ""
